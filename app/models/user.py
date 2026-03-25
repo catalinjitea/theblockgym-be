@@ -1,0 +1,21 @@
+from datetime import datetime
+from typing import List, Optional
+from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+
+    id:                    Mapped[int]                = mapped_column(Integer, primary_key=True, index=True)
+    name:                  Mapped[str]                = mapped_column(String(100), nullable=False)
+    email:                 Mapped[str]                = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password:       Mapped[str]                = mapped_column(String(255), nullable=False)
+    is_active:             Mapped[bool]               = mapped_column(Boolean, default=True)
+    is_admin:              Mapped[bool]               = mapped_column(Boolean, default=False)
+    terms_accepted_at:     Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    privacy_accepted_at:   Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    created_at:            Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
+
+    memberships: Mapped[List["Membership"]] = relationship("Membership", back_populates="user", order_by="Membership.created_at.desc()")
