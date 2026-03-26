@@ -2,9 +2,7 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-# DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost/blockgym")
-DATABASE_URL="postgresql+asyncpg://localhost/blockgym"
-
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://localhost/blockgym")
 
 # Railway provides DATABASE_URL with postgres:// — SQLAlchemy needs postgresql+asyncpg://
 if DATABASE_URL.startswith("postgres://"):
