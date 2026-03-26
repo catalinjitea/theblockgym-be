@@ -17,6 +17,7 @@ app.add_middleware(
     allow_origins=[
         os.getenv("FRONTEND_URL", "http://localhost:3000"),
         "https://theblockgym.ro",
+        "https://theblockgym-fe.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
