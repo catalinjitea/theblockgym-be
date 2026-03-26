@@ -4,9 +4,11 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://localhost/blockgym")
 
-# Railway provides DATABASE_URL with postgres:// — SQLAlchemy needs postgresql+asyncpg://
+# Railway may provide either postgres:// or postgresql:// — both need +asyncpg
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
@@ -19,7 +21,6 @@ AsyncSessionLocal = sessionmaker(
 class Base(DeclarativeBase):
     pass
 
-# ── Dependency — use in route handlers ───────────────────────────────────────
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         try:
