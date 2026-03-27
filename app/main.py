@@ -15,10 +15,9 @@ app = FastAPI(title="The Block Gym API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        os.getenv("FRONTEND_URL", "http://localhost:3000"),
-        "https://www.theblockgym.ro",
         "https://theblockgym.ro",
-        "https://theblockgym-fe.vercel.app",
+        "https://www.theblockgym.ro",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
