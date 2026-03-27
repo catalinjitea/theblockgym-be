@@ -31,8 +31,8 @@ def set_auth_cookie(response: Response, token: str) -> None:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=IS_PRODUCTION,
-        samesite="lax",
+        secure=True,        # must be True when samesite=none
+        samesite="none",    # required for cross-site requests
         max_age=60 * 60,
         path="/",
     )
@@ -84,9 +84,14 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 
 # ── POST /auth/logout ─────────────────────────────────────────────────────────
-@router.post("/logout", dependencies=[Depends(require_admin)])
+@router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        samesite="none",
+        secure=True,
+    )
     return {"status": "logged out"}
 
 
