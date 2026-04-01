@@ -11,19 +11,3 @@ stripe==10.12.0
 python-dotenv==1.0.1
 qrcode==7.4.2
 Pillow==10.4.0
-
-
-curl -X POST http://localhost:8080/auth/login \
-  -H "Content-Type: application/json" \
-  -c cookies.txt \
-  -d '{
-    "email": "admin@email.com",
-    "password": "pass123"
-  }'
-
-
-  curl -X POST http://localhost:8080/admin/qrcards/generate \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"count": 5}' \
-  --output cards.zip
