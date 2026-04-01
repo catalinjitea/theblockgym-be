@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-from app.routers import admin, auth, memberships, payments
+from app.routers import admin, auth, memberships, payments, qr_cards
 
 app = FastAPI(title="The Block Gym API")
 
@@ -15,9 +15,10 @@ app = FastAPI(title="The Block Gym API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://theblockgym.ro",
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
         "https://www.theblockgym.ro",
-        "http://localhost:3000",
+        "https://theblockgym.ro",
+        "https://theblockgym-fe.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -35,6 +36,7 @@ app.include_router(auth.router,        prefix="/auth",        tags=["Auth"])
 app.include_router(admin.router,       prefix="/admin",       tags=["Admin"])
 app.include_router(memberships.router, prefix="/memberships", tags=["Memberships"])
 app.include_router(payments.router,    prefix="/payments",    tags=["Payments"])
+app.include_router(qr_cards.router,    prefix="/admin/qrcards", tags=["QR Cards"])
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
