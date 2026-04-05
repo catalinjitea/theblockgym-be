@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import require_admin
@@ -24,7 +25,7 @@ PLAN_CONFIG = {
 
 
 # ── GET /admin/users ──────────────────────────────────────────────────────────
-@router.get("/users", dependencies=[Depends(require_admin)], response_model=list[UserResponse])
+@router.get("/users", response_model=list[UserResponse])
 async def list_users(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -33,8 +34,53 @@ async def list_users(
     return result.scalars().all()
 
 
+# ── GET /admin/memberships/search ─────────────────────────────────────────────
+class MembershipWithUserResponse(BaseModel):
+    membership_id: int
+    plan: str
+    status: str
+    end_date: str
+    user_id: int
+    user_name: str
+    user_email: str
+
+    model_config = {"from_attributes": True}
+
+@router.get("/memberships/search", response_model=list[MembershipWithUserResponse])
+async def search_memberships(
+    q: str = Query(..., min_length=1),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Membership)
+        .join(User)
+        .where(
+            or_(
+                User.name.ilike(f"%{q}%"),
+                User.email.ilike(f"%{q}%"),
+            )
+        )
+        .options(selectinload(Membership.user))
+        .order_by(Membership.created_at.desc())
+    )
+    memberships = result.scalars().all()
+    return [
+        MembershipWithUserResponse(
+            membership_id=m.id,
+            plan=m.plan,
+            status=m.status,
+            end_date=m.end_date.isoformat(),
+            user_id=m.user.id,
+            user_name=m.user.name,
+            user_email=m.user.email,
+        )
+        for m in memberships
+    ]
+
+
 # ── POST /admin/users ─────────────────────────────────────────────────────────
-@router.post("/users", dependencies=[Depends(require_admin)], response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def admin_register_user(
     body: AdminRegisterRequest,
     admin: User = Depends(require_admin),
@@ -67,7 +113,7 @@ class AssignMembershipRequest(BaseModel):
     plan: str
     start_date: str
 
-@router.post("/users/{user_id}/memberships", dependencies=[Depends(require_admin)], response_model=MembershipResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/users/{user_id}/memberships", response_model=MembershipResponse, status_code=status.HTTP_201_CREATED)
 async def assign_membership(
     user_id: int,
     body: AssignMembershipRequest,
@@ -104,7 +150,7 @@ async def assign_membership(
 
 
 # ── PATCH /admin/users/{id}/deactivate ───────────────────────────────────────
-@router.patch("/users/{user_id}/deactivate", dependencies=[Depends(require_admin)], response_model=UserResponse)
+@router.patch("/users/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(
     user_id: int,
     admin: User = Depends(require_admin),
@@ -123,7 +169,7 @@ async def deactivate_user(
 
 
 # ── PATCH /admin/users/{id}/activate ─────────────────────────────────────────
-@router.patch("/users/{user_id}/activate", dependencies=[Depends(require_admin)], response_model=UserResponse)
+@router.patch("/users/{user_id}/activate", response_model=UserResponse)
 async def activate_user(
     user_id: int,
     admin: User = Depends(require_admin),
