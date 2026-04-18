@@ -21,7 +21,7 @@ class PlanResponse(BaseModel):
 
 
 # ── GET /plans ────────────────────────────────────────────────────────────────
-@router.get("/", response_model=list[PlanResponse])
+@router.get("", response_model=list[PlanResponse])
 async def list_plans(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(MembershipPlan)
