@@ -92,7 +92,7 @@ async def verify_qr_card(
             "status": "expired",
             "code": code,
             "message": "Abonament expirat.",
-            "member_name": user.name,
+            "member_name": f"{user.first_name} {user.last_name}",
             "plan": membership.plan,
             "expiry_date": membership.end_date.isoformat(),
         }
@@ -104,7 +104,7 @@ async def verify_qr_card(
         "status": "valid",
         "code": code,
         "message": "Acces permis.",
-        "member_name": user.name,
+        "member_name": f"{user.first_name} {user.last_name}",
         "plan": membership.plan,
         "expiry_date": membership.end_date.isoformat(),
     }
