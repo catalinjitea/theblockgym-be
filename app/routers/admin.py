@@ -63,11 +63,12 @@ async def search_users(
         select(User)
         .where(
             or_(
-                User.name.ilike(f"%{q}%"),
+                User.first_name.ilike(f"%{q}%"),
+                User.last_name.ilike(f"%{q}%"),
                 User.email.ilike(f"%{q}%"),
             )
         )
-        .order_by(User.name)
+        .order_by(User.last_name, User.first_name)
     )
     return result.scalars().all()
 
