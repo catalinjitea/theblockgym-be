@@ -31,8 +31,8 @@ def set_auth_cookie(response: Response, token: str) -> None:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=True,        # must be True when samesite=none
-        samesite="none",    # required for cross-site requests
+        secure=IS_PRODUCTION,
+        samesite="none" if IS_PRODUCTION else "lax",
         max_age=60 * 60,
         path="/",
     )
@@ -52,8 +52,11 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
 
     now = datetime.utcnow()
     user = User(
-        name=body.name,
+        first_name=body.first_name,
+        last_name=body.last_name,
         email=body.email,
+        phone_number=body.phone_number,
+        age=body.age,
         hashed_password=hash_password(body.password),
         terms_accepted_at=now,
         privacy_accepted_at=now,
@@ -89,8 +92,8 @@ async def logout(response: Response):
     response.delete_cookie(
         key=COOKIE_NAME,
         path="/",
-        samesite="none",
-        secure=True,
+        samesite="none" if IS_PRODUCTION else "lax",
+        secure=IS_PRODUCTION,
     )
     return {"status": "logged out"}
 
@@ -114,8 +117,14 @@ async def update_profile(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use.")
         current_user.email = body.email
 
-    if body.name:
-        current_user.name = body.name
+    if body.first_name:
+        current_user.first_name = body.first_name
+    if body.last_name:
+        current_user.last_name = body.last_name
+    if body.phone_number:
+        current_user.phone_number = body.phone_number
+    if body.age is not None:
+        current_user.age = body.age
 
     return current_user
 

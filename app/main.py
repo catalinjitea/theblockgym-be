@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-from app.routers import admin, auth, memberships, payments, qr_cards
+from app.models import membership_plan  # noqa: F401 – registers MembershipPlan with Base
+from app.routers import admin, auth, memberships, payments, plans, qr_cards
 
 app = FastAPI(title="The Block Gym API")
 
@@ -37,6 +38,7 @@ app.include_router(auth.router,        prefix="/auth",        tags=["Auth"])
 app.include_router(admin.router,       prefix="/admin",       tags=["Admin"])
 app.include_router(memberships.router, prefix="/memberships", tags=["Memberships"])
 app.include_router(payments.router,    prefix="/payments",    tags=["Payments"])
+app.include_router(plans.router,       prefix="/plans",        tags=["Plans"])
 app.include_router(qr_cards.router,    prefix="/admin/qrcards", tags=["QR Cards"])
 
 # ── Health check ──────────────────────────────────────────────────────────────

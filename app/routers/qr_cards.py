@@ -1,7 +1,7 @@
 import io
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.dependencies import require_admin
 from app.core.websocket import manager
 from app.models.membership import Membership
+from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
 from app.models.user import User
 from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse
@@ -126,7 +127,7 @@ async def generate_qr_cards(
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for _ in range(body.count):
             code = f"CARD_{uuid.uuid4().hex[:12].upper()}"
-            card = QRCard(code=code, is_active=False)
+            card = QRCard(code=code, type="physical", is_active=False)
             db.add(card)
             png_bytes = generate_qr_image(code)
             zf.writestr(f"{code}.png", png_bytes)
@@ -166,16 +167,33 @@ async def activate_qr_card(
     if card.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Card is already active.")
 
-    result = await db.execute(select(Membership).where(Membership.id == body.membership_id))
-    membership = result.scalar_one_or_none()
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
+    result = await db.execute(select(User).where(User.id == body.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
-    result = await db.execute(select(QRCard).where(QRCard.membership_id == body.membership_id))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This membership already has a QR card assigned.")
+    result = await db.execute(
+        select(MembershipPlan).where(MembershipPlan.key == body.plan_key, MembershipPlan.type == body.plan_type, MembershipPlan.is_active == True)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan '{body.plan_key}' invalid.")
 
-    card.membership_id = body.membership_id
+    start = datetime.combine(body.start_date, datetime.min.time())
+    end = start + timedelta(days=plan.duration_days)
+
+    membership = Membership(
+        user_id=user.id,
+        plan=plan.key,
+        status="activ",
+        amount=plan.amount,
+        start_date=start,
+        end_date=end,
+    )
+    db.add(membership)
+    await db.flush()
+
+    card.membership_id = membership.id
     card.is_active = True
     return card
 
