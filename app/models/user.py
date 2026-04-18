@@ -9,8 +9,11 @@ class User(Base):
     __tablename__ = "users"
 
     id:                    Mapped[int]                = mapped_column(Integer, primary_key=True, index=True)
-    name:                  Mapped[str]                = mapped_column(String(100), nullable=False)
+    first_name:            Mapped[str]                = mapped_column(String(100), nullable=False)
+    last_name:             Mapped[str]                = mapped_column(String(100), nullable=False)
     email:                 Mapped[str]                = mapped_column(String(255), unique=True, index=True, nullable=False)
+    phone_number:          Mapped[str]                = mapped_column(String(20), nullable=False)
+    age:                   Mapped[Optional[int]]      = mapped_column(Integer, nullable=True)
     hashed_password:       Mapped[str]                = mapped_column(String(255), nullable=False)
     is_active:             Mapped[bool]               = mapped_column(Boolean, default=True)
     is_admin:              Mapped[bool]               = mapped_column(Boolean, default=False)

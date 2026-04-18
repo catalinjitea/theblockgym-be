@@ -15,7 +15,7 @@ class Membership(Base):
     amount:            Mapped[int]           = mapped_column(Integer, nullable=False)
     start_date:        Mapped[datetime]      = mapped_column(DateTime, nullable=False)
     end_date:          Mapped[datetime]      = mapped_column(DateTime, nullable=False)
-    stripe_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    payment_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at:        Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
     user    = relationship("User", back_populates="memberships")

@@ -4,9 +4,12 @@ from pydantic import BaseModel, EmailStr
 
 # ── Register ──────────────────────────────────────────────────────────────────
 class RegisterRequest(BaseModel):
-    name: str
+    first_name: str
+    last_name: str
     email: EmailStr
     password: str
+    phone_number: str
+    age: Optional[int] = None
     terms_accepted: bool
     privacy_accepted: bool
 
@@ -22,8 +25,11 @@ class TokenResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    name: str
+    first_name: str
+    last_name: str
     email: str
+    phone_number: str
+    age: Optional[int]
     is_active: bool
     is_admin: bool
     terms_accepted_at: Optional[datetime]
@@ -34,16 +40,22 @@ class UserResponse(BaseModel):
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 class AdminRegisterRequest(BaseModel):
-    name: str
+    first_name: str
+    last_name: str
     email: EmailStr
     password: str
+    phone_number: str
+    age: Optional[int] = None
     terms_accepted: bool
     privacy_accepted: bool
 
 # ── Profile update ────────────────────────────────────────────────────────────
 class UpdateProfileRequest(BaseModel):
-    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    age: Optional[int] = None
 
 class UpdatePasswordRequest(BaseModel):
     current_password: str
