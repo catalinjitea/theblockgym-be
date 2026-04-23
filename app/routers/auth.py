@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_admin
 from app.core.security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    ADMIN_TOKEN_EXPIRE_MINUTES,
     create_access_token,
     hash_password,
     verify_password,
@@ -26,14 +28,14 @@ IS_PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
 COOKIE_NAME = "access_token"
 
 # ── Helper: set auth cookie ───────────────────────────────────────────────────
-def set_auth_cookie(response: Response, token: str) -> None:
+def set_auth_cookie(response: Response, token: str, max_age_minutes: int) -> None:
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         secure=IS_PRODUCTION,
         samesite="none" if IS_PRODUCTION else "lax",
-        max_age=60 * 60,
+        max_age=max_age_minutes * 60,
         path="/",
     )
 
@@ -64,8 +66,9 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     db.add(user)
     await db.flush()
 
-    token = create_access_token(subject=str(user.id))
-    set_auth_cookie(response, token)
+    expire_minutes = ACCESS_TOKEN_EXPIRE_MINUTES
+    token = create_access_token(subject=str(user.id), expires_delta=timedelta(minutes=expire_minutes))
+    set_auth_cookie(response, token, max_age_minutes=expire_minutes)
     return user
 
 
@@ -81,8 +84,9 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive.")
 
-    token = create_access_token(subject=str(user.id))
-    set_auth_cookie(response, token)
+    expire_minutes = ADMIN_TOKEN_EXPIRE_MINUTES if user.is_admin else ACCESS_TOKEN_EXPIRE_MINUTES
+    token = create_access_token(subject=str(user.id), expires_delta=timedelta(minutes=expire_minutes))
+    set_auth_cookie(response, token, max_age_minutes=expire_minutes)
     return user
 
 
