@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,4 +229,33 @@ async def activate_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
     user.is_active = True
+    return user
+
+
+# ── PATCH /admin/users/{id} ───────────────────────────────────────────────────
+class AdminUpdateUserRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    age: Optional[int] = None
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: int,
+    body: AdminUpdateUserRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    if body.first_name is not None: user.first_name = body.first_name
+    if body.last_name is not None: user.last_name = body.last_name
+    if body.email is not None: user.email = body.email
+    if body.phone_number is not None: user.phone_number = body.phone_number
+    if body.age is not None: user.age = body.age
+
     return user
