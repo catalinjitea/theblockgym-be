@@ -172,6 +172,30 @@ async def assign_membership(
     return membership
 
 
+# ── PATCH /admin/memberships/{id} ────────────────────────────────────────────
+class UpdateMembershipRequest(BaseModel):
+    end_date: str
+
+@router.patch("/memberships/{membership_id}", response_model=MembershipResponse)
+async def update_membership(
+    membership_id: int,
+    body: UpdateMembershipRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Membership).where(Membership.id == membership_id))
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
+
+    try:
+        membership.end_date = datetime.fromisoformat(body.end_date)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format dată invalid. Folosește YYYY-MM-DD.")
+
+    return membership
+
+
 # ── PATCH /admin/users/{id}/deactivate ───────────────────────────────────────
 @router.patch("/users/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(

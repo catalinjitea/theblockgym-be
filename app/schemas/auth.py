@@ -24,6 +24,7 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 class LatestMembershipInfo(BaseModel):
+    id: int
     plan: str
     start_date: datetime
     end_date: datetime
