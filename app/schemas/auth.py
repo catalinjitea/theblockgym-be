@@ -23,6 +23,14 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+class LatestMembershipInfo(BaseModel):
+    plan: str
+    start_date: datetime
+    end_date: datetime
+    status: str
+
+    model_config = {"from_attributes": True}
+
 class UserResponse(BaseModel):
     id: int
     first_name: str
@@ -35,6 +43,14 @@ class UserResponse(BaseModel):
     terms_accepted_at: Optional[datetime]
     privacy_accepted_at: Optional[datetime]
     created_at: datetime
+    latest_membership: Optional[LatestMembershipInfo] = None
+
+    @classmethod
+    def from_orm_with_membership(cls, user):
+        obj = cls.model_validate(user)
+        if user.memberships:
+            obj.latest_membership = LatestMembershipInfo.model_validate(user.memberships[0])
+        return obj
 
     model_config = {"from_attributes": True}
 

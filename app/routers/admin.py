@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,11 +22,23 @@ router = APIRouter()
 # ── GET /admin/users ──────────────────────────────────────────────────────────
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
+    response: Response,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
-    return result.scalars().all()
+    total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.memberships))
+        .order_by(User.created_at.desc(), User.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    response.headers["X-Total-Count"] = str(total)
+    users = result.scalars().all()
+    return [UserResponse.from_orm_with_membership(u) for u in users]
 
 
 # ── GET /admin/plans ──────────────────────────────────────────────────────────
@@ -61,6 +73,7 @@ async def search_users(
 ):
     result = await db.execute(
         select(User)
+        .options(selectinload(User.memberships))
         .where(
             or_(
                 User.first_name.ilike(f"%{q}%"),
@@ -70,7 +83,8 @@ async def search_users(
         )
         .order_by(User.last_name, User.first_name)
     )
-    return result.scalars().all()
+    users = result.scalars().all()
+    return [UserResponse.from_orm_with_membership(u) for u in users]
 
 
 # ── POST /admin/users ─────────────────────────────────────────────────────────
