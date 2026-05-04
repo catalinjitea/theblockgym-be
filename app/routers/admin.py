@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from typing import Optional
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.membership import compute_end_date
 from app.core.dependencies import require_admin
 from app.core.security import hash_password
 from app.models.membership import Membership
@@ -148,7 +149,7 @@ async def assign_membership(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format dată invalid. Folosește YYYY-MM-DD.")
 
-    end = start + timedelta(days=plan.duration_days)
+    end = compute_end_date(start, plan)
 
     membership = Membership(
         user_id=user.id,

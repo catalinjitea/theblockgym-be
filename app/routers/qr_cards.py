@@ -1,7 +1,7 @@
 import io
 import uuid
 import zipfile
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.membership import compute_end_date
 from app.core.dependencies import require_admin
 from app.core.websocket import manager
 from app.models.membership import Membership
@@ -182,7 +183,7 @@ async def activate_qr_card(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan '{body.plan_key}' invalid.")
 
     start = datetime.combine(body.start_date, datetime.min.time())
-    end = start + timedelta(days=plan.duration_days)
+    end = compute_end_date(start, plan)
 
     membership = Membership(
         user_id=user.id,

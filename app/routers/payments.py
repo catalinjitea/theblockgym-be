@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.membership import compute_end_date
 from app.core.dependencies import require_user
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
@@ -287,7 +288,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         return JSONResponse({"status": "ok"})
 
     start = start_date
-    end = start + timedelta(days=plan.duration_days)
+    end = compute_end_date(start, plan)
 
     membership = Membership(
         user_id=user.id,
