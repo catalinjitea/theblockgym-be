@@ -191,7 +191,8 @@ async def update_membership(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
 
     try:
-        membership.end_date = datetime.fromisoformat(body.end_date)
+        parsed = datetime.fromisoformat(body.end_date)
+        membership.end_date = parsed.replace(hour=23, minute=59, second=59, microsecond=0)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Format dată invalid. Folosește YYYY-MM-DD.")
 
