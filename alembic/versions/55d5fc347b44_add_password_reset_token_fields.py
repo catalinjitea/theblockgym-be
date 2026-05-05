@@ -1,8 +1,8 @@
-"""add_password_reset_token_fields
+"""add password reset token fields
 
-Revision ID: fe28add1dc38
-Revises: c5c27aea6474
-Create Date: 2026-05-01 11:41:56.843782
+Revision ID: 55d5fc347b44
+Revises: e0d0ff428621
+Create Date: 2026-05-05 09:13:09.383736
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'fe28add1dc38'
-down_revision: Union[str, None] = 'c5c27aea6474'
+revision: str = '55d5fc347b44'
+down_revision: Union[str, None] = 'e0d0ff428621'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
