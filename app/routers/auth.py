@@ -166,7 +166,7 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
         user.password_reset_token = token
         user.password_reset_token_expires = datetime.utcnow() + timedelta(hours=1)
         await db.flush()
-        await send_password_reset_email(user.email, user.first_name, token)
+        await send_password_reset_email(user.email, user.first_name, token, lang=body.lang)
 
     return {"status": "ok"}
 

@@ -82,6 +82,7 @@ class UpdatePasswordRequest(BaseModel):
 # ── Password reset ────────────────────────────────────────────────────────────
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+    lang: str = "ro"
 
 class ResetPasswordRequest(BaseModel):
     token: str
