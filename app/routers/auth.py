@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_admin
+from app.core.email import send_password_reset_email
 from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ADMIN_TOKEN_EXPIRE_MINUTES,
@@ -15,8 +17,10 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     UpdatePasswordRequest,
     UpdateProfileRequest,
     UserResponse,
@@ -148,3 +152,38 @@ async def update_password(
 
     current_user.hashed_password = hash_password(body.new_password)
     return {"status": "password updated"}
+
+
+# ── POST /auth/forgot-password ────────────────────────────────────────────────
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    # Always return success to avoid leaking whether the email exists
+    if user and user.is_active:
+        token = secrets.token_urlsafe(32)
+        user.password_reset_token = token
+        user.password_reset_token_expires = datetime.utcnow() + timedelta(hours=1)
+        await db.flush()
+        await send_password_reset_email(user.email, user.first_name, token, lang=body.lang)
+
+    return {"status": "ok"}
+
+
+# ── POST /auth/reset-password ─────────────────────────────────────────────────
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    if body.new_password != body.confirm_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parolele nu coincid.")
+
+    result = await db.execute(select(User).where(User.password_reset_token == body.token))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.password_reset_token_expires or user.password_reset_token_expires < datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Link-ul de resetare este invalid sau a expirat.")
+
+    user.hashed_password = hash_password(body.new_password)
+    user.password_reset_token = None
+    user.password_reset_token_expires = None
+    return {"status": "password reset"}
