@@ -199,7 +199,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         ipn_data = _json.loads(payload.decode("utf-8"))
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid IPN payload.")
+        return JSONResponse({"errorCode": 1})
 
     order_id: str = ipn_data.get("order", {}).get("orderID", "")
     # Status int: 3=PAID, 5=CONFIRMED (see PaymentStatus constants)
@@ -214,7 +214,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     verification_token = request.headers.get("Verification-token", "")
     if not verification_token:
         print("⚠️  IPN missing Verification-token header")
-        raise HTTPException(status_code=400, detail="Missing Verification-token header.")
+        return JSONResponse({"errorCode": 1})
 
     try:
         def _pad(s): return s + "=" * ((4 - len(s) % 4) % 4)
@@ -241,21 +241,21 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         print("✅ IPN token verified (issuer + audience + payload hash)")
     except Exception as e:
         print(f"⚠️  IPN verification failed: {e}")
-        raise HTTPException(status_code=400, detail=f"IPN verification failed: {e}")
+        return JSONResponse({"errorCode": 1})
 
     print(f"Netopia IPN — orderID={order_id!r} status={status}")
 
     # Only activate membership on paid/confirmed
     if status not in (3, 5):
-        return JSONResponse({"status": "ignored", "reason": f"payment status: {status}"})
+        return JSONResponse({"errorCode": 0})
 
     if not order_id or not order_id.startswith("GYM-"):
-        return JSONResponse({"status": "ignored", "reason": "unrecognised orderID format"})
+        return JSONResponse({"errorCode": 0})
 
     # Decode: GYM-{user_id}-{plan}-{plan_type_code}-{start_date}-{timestamp}
     parts = order_id.split("-")
     if len(parts) < 6:
-        return JSONResponse({"status": "ignored", "reason": "malformed orderID"})
+        return JSONResponse({"errorCode": 0})
 
     try:
         user_id = int(parts[1])
@@ -264,20 +264,20 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         start_date_str = parts[4]
         start_date = datetime.strptime(start_date_str, "%Y%m%d")
     except (ValueError, IndexError):
-        return JSONResponse({"status": "ignored", "reason": "could not parse orderID"})
+        return JSONResponse({"errorCode": 0})
 
     plan_type = "full_time" if plan_type_code == "ft" else "day_time"
     plan_result = await db.execute(select(MembershipPlan).where(MembershipPlan.key == plan_key, MembershipPlan.type == plan_type))
     plan = plan_result.scalar_one_or_none()
     if not plan:
         print(f"⚠️ Unknown plan '{plan_key}' in orderID: {order_id}")
-        return JSONResponse({"status": "ignored", "reason": "unknown plan"})
+        return JSONResponse({"errorCode": 0})
 
     result_db = await db.execute(select(User).where(User.id == user_id))
     user = result_db.scalar_one_or_none()
     if not user:
         print(f"⚠️ No user found for id: {user_id}")
-        return JSONResponse({"status": "user not found"})
+        return JSONResponse({"errorCode": 0})
 
     # Guard against duplicate IPNs for the same order (Netopia sends PAID then CONFIRMED)
     existing = await db.execute(
@@ -285,7 +285,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     )
     if existing.scalar_one_or_none():
         print(f"ℹ️  Membership already exists for order {order_id}, skipping.")
-        return JSONResponse({"status": "ok"})
+        return JSONResponse({"errorCode": 0})
 
     start = start_date
     end = compute_end_date(start, plan)
@@ -312,4 +312,4 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     db.add(qr_card)
     print(f"✅ Membership created — user: {user.email}, plan: {plan_key}, ends: {end.date()}")
 
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({"errorCode": 0})
