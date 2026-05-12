@@ -47,7 +47,10 @@ async def get_my_qr(
     if not membership or not membership.qr_card:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No QR code found for your membership.")
 
-    png_bytes = generate_qr_image(membership.qr_card.code)
+    code = membership.qr_card.code
+    if code.startswith("QR"):
+        code = code[2:]
+    png_bytes = generate_qr_image(code)
     return StreamingResponse(io.BytesIO(png_bytes), media_type="image/png")
 
 
