@@ -166,7 +166,7 @@ async def assign_membership(
     db.add(membership)
     await db.flush()
 
-    qr_code = f"CARD_{uuid.uuid4().hex[:12].upper()}"
+    qr_code = f"QRCARD_{uuid.uuid4().hex[:12].upper()}"
     qr_card = QRCard(
         code=qr_code,
         type="digital",
