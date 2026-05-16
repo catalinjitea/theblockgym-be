@@ -302,7 +302,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     db.add(membership)
     await db.flush()  # populate membership.id
 
-    qr_code = f"CARD_{uuid.uuid4().hex[:12].upper()}"
+    qr_code = f"QRCARD_{uuid.uuid4().hex[:12].upper()}"
     qr_card = QRCard(
         code=qr_code,
         type="digital",

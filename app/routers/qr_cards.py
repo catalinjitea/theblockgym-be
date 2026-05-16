@@ -129,10 +129,10 @@ async def generate_qr_cards(
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for _ in range(body.count):
-            code = f"CARD_{uuid.uuid4().hex[:12].upper()}"
+            code = f"QRCARD_{uuid.uuid4().hex[:12].upper()}"
             card = QRCard(code=code, type="physical", is_active=False)
             db.add(card)
-            png_bytes = generate_qr_image(code)
+            png_bytes = generate_qr_image(code[2:])
             zf.writestr(f"{code}.png", png_bytes)
 
     await db.flush()
