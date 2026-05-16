@@ -15,6 +15,7 @@ from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
 from app.models.user import User
+from app.core.email import send_welcome_email
 from app.schemas.auth import AdminRegisterRequest, UserResponse
 from app.schemas.membership import MembershipResponse
 
@@ -118,6 +119,9 @@ async def admin_register_user(
     )
     db.add(user)
     await db.flush()
+
+    await send_welcome_email(user.email, user.first_name)
+
     return user
 
 

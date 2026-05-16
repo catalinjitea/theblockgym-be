@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_admin
-from app.core.email import send_password_reset_email
+from app.core.email import send_password_reset_email, send_welcome_email
 from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ADMIN_TOKEN_EXPIRE_MINUTES,
@@ -73,6 +73,9 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     expire_minutes = ACCESS_TOKEN_EXPIRE_MINUTES
     token = create_access_token(subject=str(user.id), expires_delta=timedelta(minutes=expire_minutes))
     set_auth_cookie(response, token, max_age_minutes=expire_minutes)
+
+    await send_welcome_email(user.email, user.first_name)
+
     return user
 
 
