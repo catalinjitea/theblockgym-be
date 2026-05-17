@@ -20,3 +20,8 @@ class ActivateQRCardRequest(BaseModel):
     plan_key: str
     plan_type: str
     start_date: date
+
+class RenewQRCardRequest(BaseModel):
+    plan_key: str
+    plan_type: str
+    start_date: date

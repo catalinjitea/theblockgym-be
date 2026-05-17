@@ -166,14 +166,37 @@ async def assign_membership(
     db.add(membership)
     await db.flush()
 
-    qr_code = f"QRCARD_{uuid.uuid4().hex[:12].upper()}"
-    qr_card = QRCard(
-        code=qr_code,
-        type="digital",
-        is_active=True,
-        membership_id=membership.id,
+    # Check if the user currently has an active membership (advance purchase case).
+    # If so, leave the existing QR card pointing to the current active membership —
+    # verify_qr_card will auto-repoint it once that membership expires.
+    has_active_membership = await db.execute(
+        select(Membership).where(
+            Membership.user_id == user_id,
+            Membership.id != membership.id,
+            Membership.end_date >= datetime.utcnow(),
+        )
     )
-    db.add(qr_card)
+    if not has_active_membership.scalar_one_or_none():
+        # No currently active membership: reuse existing digital QR card or create a new one.
+        existing_qr_result = await db.execute(
+            select(QRCard)
+            .join(Membership, QRCard.membership_id == Membership.id)
+            .where(Membership.user_id == user_id, QRCard.type == "digital")
+            .order_by(QRCard.created_at.desc())
+            .limit(1)
+        )
+        existing_qr = existing_qr_result.scalar_one_or_none()
+
+        if existing_qr:
+            existing_qr.membership_id = membership.id
+            existing_qr.is_active = True
+        else:
+            db.add(QRCard(
+                code=f"QRCARD_{uuid.uuid4().hex[:12].upper()}",
+                type="digital",
+                is_active=True,
+                membership_id=membership.id,
+            ))
 
     return membership
 

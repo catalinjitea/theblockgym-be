@@ -302,14 +302,25 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     db.add(membership)
     await db.flush()  # populate membership.id
 
-    qr_code = f"QRCARD_{uuid.uuid4().hex[:12].upper()}"
-    qr_card = QRCard(
-        code=qr_code,
-        type="digital",
-        is_active=True,
-        membership_id=membership.id,
+    existing_qr_result = await db.execute(
+        select(QRCard)
+        .join(Membership, QRCard.membership_id == Membership.id)
+        .where(Membership.user_id == user.id, QRCard.type == "digital")
+        .order_by(QRCard.created_at.desc())
+        .limit(1)
     )
-    db.add(qr_card)
+    existing_qr = existing_qr_result.scalar_one_or_none()
+
+    if existing_qr:
+        existing_qr.membership_id = membership.id
+        existing_qr.is_active = True
+    else:
+        db.add(QRCard(
+            code=f"QRCARD_{uuid.uuid4().hex[:12].upper()}",
+            type="digital",
+            is_active=True,
+            membership_id=membership.id,
+        ))
     print(f"✅ Membership created — user: {user.email}, plan: {plan_key}, ends: {end.date()}")
 
     return JSONResponse({"errorCode": 0})

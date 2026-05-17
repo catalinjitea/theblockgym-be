@@ -18,7 +18,7 @@ from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
 from app.models.user import User
-from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse
+from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse, RenewQRCardRequest
 
 router = APIRouter()
 
@@ -87,19 +87,44 @@ async def verify_qr_card(
     membership = card.membership
     user = membership.user
 
-    # Membership expired
-    if membership.end_date < datetime.utcnow():
+    now = datetime.utcnow()
+
+    # Membership not yet started
+    if membership.start_date > now:
         payload = {
-            "status": "expired",
+            "status": "inactive",
             "code": code,
-            "message": "Abonament expirat.",
-            "member_name": f"{user.first_name} {user.last_name}",
-            "plan": membership.plan,
-            "start_date": membership.start_date.isoformat(),
-            "expiry_date": membership.end_date.isoformat(),
+            "message": "Abonament neînceput.",
         }
         await manager.broadcast(payload)
         return payload
+
+    # Membership expired — check for an advance-purchased membership that is now active
+    if membership.end_date < now:
+        advance_result = await db.execute(
+            select(Membership).where(
+                Membership.user_id == user.id,
+                Membership.start_date <= now,
+                Membership.end_date >= now,
+                Membership.id != membership.id,
+            ).order_by(Membership.start_date.asc()).limit(1)
+        )
+        advance = advance_result.scalar_one_or_none()
+        if advance:
+            card.membership_id = advance.id
+            membership = advance
+        else:
+            payload = {
+                "status": "expired",
+                "code": code,
+                "message": "Abonament expirat.",
+                "member_name": f"{user.first_name} {user.last_name}",
+                "plan": membership.plan,
+                "start_date": membership.start_date.isoformat(),
+                "expiry_date": membership.end_date.isoformat(),
+            }
+            await manager.broadcast(payload)
+            return payload
 
     # All good
     payload = {
@@ -198,6 +223,58 @@ async def activate_qr_card(
 
     card.membership_id = membership.id
     card.is_active = True
+    return card
+
+
+# ── POST /admin/qrcards/{code}/renew ─────────────────────────────────────────
+@router.post("/{code}/renew", response_model=QRCardResponse)
+async def renew_qr_card(
+    code: str,
+    body: RenewQRCardRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(QRCard)
+        .where(QRCard.code == code)
+        .options(selectinload(QRCard.membership).selectinload(Membership.user))
+    )
+    card = result.scalar_one_or_none()
+    if not card:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR card not found.")
+    if not card.is_active or not card.membership:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Card is not active or has no membership.")
+    if card.membership.end_date >= datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Membership is still active.")
+
+    user = card.membership.user
+
+    result = await db.execute(
+        select(MembershipPlan).where(
+            MembershipPlan.key == body.plan_key,
+            MembershipPlan.type == body.plan_type,
+            MembershipPlan.is_active == True,
+        )
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Plan '{body.plan_key}' invalid.")
+
+    start = datetime.combine(body.start_date, datetime.min.time())
+    end = compute_end_date(start, plan)
+
+    membership = Membership(
+        user_id=user.id,
+        plan=plan.key,
+        status="activ",
+        amount=plan.amount,
+        start_date=start,
+        end_date=end,
+    )
+    db.add(membership)
+    await db.flush()
+
+    card.membership_id = membership.id
     return card
 
 
