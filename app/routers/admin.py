@@ -40,7 +40,8 @@ class StatsResponse(BaseModel):
     active_accounts: int
     inactive_accounts: int
     active_subscriptions: int
-    no_subscription: int
+    expired_subscription: int
+    never_subscribed: int
     plan_distribution: list[PlanCount]
     expiring_7_days: int
     expiring_30_days: int
@@ -75,6 +76,23 @@ async def get_stats(
         select(func.count(func.distinct(Membership.user_id)))
         .join(User, User.id == Membership.user_id)
         .where(*active_sub_filter)
+    )).scalar_one()
+
+    active_user_ids_subq = (
+        select(Membership.user_id)
+        .where(Membership.start_date <= now, Membership.end_date >= now)
+        .distinct()
+    )
+    expired_subscription = (await db.execute(
+        select(func.count(func.distinct(Membership.user_id)))
+        .join(User, User.id == Membership.user_id)
+        .where(User.is_admin == False, ~Membership.user_id.in_(active_user_ids_subq))
+    )).scalar_one()
+
+    never_subscribed = (await db.execute(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_admin == False, ~User.id.in_(select(Membership.user_id).distinct()))
     )).scalar_one()
 
     plan_rows = (await db.execute(
@@ -136,7 +154,8 @@ async def get_stats(
         active_accounts=active_accounts,
         inactive_accounts=total - active_accounts,
         active_subscriptions=active_subscriptions,
-        no_subscription=total - active_subscriptions,
+        expired_subscription=expired_subscription,
+        never_subscribed=never_subscribed,
         plan_distribution=[PlanCount(plan=r.plan, count=r.count) for r in plan_rows],
         expiring_7_days=expiring_7,
         expiring_30_days=expiring_30,
