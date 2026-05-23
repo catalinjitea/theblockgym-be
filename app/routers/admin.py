@@ -1,9 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
-from sqlalchemy import func, select, or_
+from sqlalchemy import and_, extract, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +20,177 @@ from app.schemas.auth import AdminRegisterRequest, UserResponse
 from app.schemas.membership import MembershipResponse
 
 router = APIRouter()
+
+
+# ── GET /admin/stats ──────────────────────────────────────────────────────────
+class PlanCount(BaseModel):
+    plan: str
+    count: int
+
+class MonthlyValue(BaseModel):
+    month: str  # "YYYY-MM"
+    value: int
+
+class PlanTypeCount(BaseModel):
+    type: str
+    count: int
+
+class StatsResponse(BaseModel):
+    total_members: int
+    active_accounts: int
+    inactive_accounts: int
+    active_subscriptions: int
+    no_subscription: int
+    plan_distribution: list[PlanCount]
+    expiring_7_days: int
+    expiring_30_days: int
+    renewal_rate_pct: Optional[float]
+    plan_type_split: list[PlanTypeCount]
+
+@router.get("/stats", response_model=StatsResponse)
+async def get_stats(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.utcnow()
+    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_month_start = (this_month_start - timedelta(days=1)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    in_7_days = now + timedelta(days=7)
+    in_30_days = now + timedelta(days=30)
+
+    total = (await db.execute(
+        select(func.count()).select_from(User).where(User.is_admin == False)
+    )).scalar_one()
+
+    active_accounts = (await db.execute(
+        select(func.count()).select_from(User).where(User.is_admin == False, User.is_active == True)
+    )).scalar_one()
+
+    active_sub_filter = [
+        Membership.start_date <= now,
+        Membership.end_date >= now,
+        User.is_admin == False,
+    ]
+
+    active_subscriptions = (await db.execute(
+        select(func.count(func.distinct(Membership.user_id)))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter)
+    )).scalar_one()
+
+    plan_rows = (await db.execute(
+        select(Membership.plan, func.count().label("count"))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter)
+        .group_by(Membership.plan)
+    )).all()
+
+    expiring_7 = (await db.execute(
+        select(func.count(func.distinct(Membership.user_id)))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter, Membership.end_date <= in_7_days)
+    )).scalar_one()
+
+    expiring_30 = (await db.execute(
+        select(func.count(func.distinct(Membership.user_id)))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter, Membership.end_date <= in_30_days)
+    )).scalar_one()
+
+    expired_last_month_subq = (
+        select(Membership.user_id)
+        .join(User, User.id == Membership.user_id)
+        .where(
+            Membership.end_date >= last_month_start,
+            Membership.end_date < this_month_start,
+            User.is_admin == False,
+        )
+        .distinct()
+    )
+    total_expired_last_month = (await db.execute(
+        select(func.count()).select_from(expired_last_month_subq.subquery())
+    )).scalar_one()
+    renewed = (await db.execute(
+        select(func.count(func.distinct(Membership.user_id)))
+        .where(
+            Membership.user_id.in_(expired_last_month_subq),
+            Membership.start_date <= now,
+            Membership.end_date >= now,
+        )
+    )).scalar_one()
+    renewal_rate_pct = round(renewed / total_expired_last_month * 100, 1) if total_expired_last_month > 0 else None
+
+    plan_type_rows = (await db.execute(
+        select(MembershipPlan.type, func.count(func.distinct(Membership.user_id)).label("count"))
+        .join(MembershipPlan, and_(
+            MembershipPlan.key == Membership.plan,
+            MembershipPlan.amount == Membership.amount,
+        ))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter)
+        .group_by(MembershipPlan.type)
+    )).all()
+    plan_type_split = [PlanTypeCount(type=r.type, count=r.count) for r in plan_type_rows]
+
+    return StatsResponse(
+        total_members=total,
+        active_accounts=active_accounts,
+        inactive_accounts=total - active_accounts,
+        active_subscriptions=active_subscriptions,
+        no_subscription=total - active_subscriptions,
+        plan_distribution=[PlanCount(plan=r.plan, count=r.count) for r in plan_rows],
+        expiring_7_days=expiring_7,
+        expiring_30_days=expiring_30,
+        renewal_rate_pct=renewal_rate_pct,
+        plan_type_split=plan_type_split,
+    )
+
+
+# ── GET /admin/stats/registrations ───────────────────────────────────────────
+class RegistrationPoint(BaseModel):
+    period: str
+    value: int
+
+@router.get("/stats/registrations", response_model=list[RegistrationPoint])
+async def get_registration_stats(
+    granularity: Literal["day", "week", "month"] = Query("month"),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.utcnow()
+
+    if granularity == "day":
+        default_since = now - timedelta(days=30)
+        trunc = "day"
+    elif granularity == "week":
+        default_since = now - timedelta(weeks=12)
+        trunc = "week"
+    else:
+        default_since = now - timedelta(days=365)
+        trunc = "month"
+
+    since = datetime.combine(from_date, datetime.min.time()) if from_date else default_since
+    until = datetime.combine(to_date, datetime.max.time().replace(microsecond=0)) if to_date else None
+
+    filters = [Membership.created_at >= since]
+    if until:
+        filters.append(Membership.created_at <= until)
+
+    period_col = func.date_trunc(trunc, Membership.created_at).label("period")
+    rows = (await db.execute(
+        select(period_col, func.count().label("count"))
+        .where(*filters)
+        .group_by(period_col)
+        .order_by(period_col)
+    )).all()
+
+    result = []
+    for r in rows:
+        period_str = r.period.strftime("%Y-%m") if granularity == "month" else r.period.strftime("%Y-%m-%d")
+        result.append(RegistrationPoint(period=period_str, value=r.count))
+    return result
 
 
 # ── GET /admin/users ──────────────────────────────────────────────────────────
