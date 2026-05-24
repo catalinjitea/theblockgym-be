@@ -43,7 +43,6 @@ class StatsResponse(BaseModel):
     plan_distribution: list[PlanCount]
     expiring_tomorrow: int
     expiring_7_days: int
-    expiring_30_days: int
     renewal_rate_pct: Optional[float]
     new_members_this_month: int
     renewed_this_month: int
@@ -59,7 +58,6 @@ async def get_stats(
     tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow_end = tomorrow_start.replace(hour=23, minute=59, second=59)
     in_7_days = now + timedelta(days=7)
-    in_30_days = now + timedelta(days=30)
 
     total = (await db.execute(
         select(func.count()).select_from(User).where(User.is_admin == False)
@@ -113,11 +111,6 @@ async def get_stats(
         .where(*active_sub_filter, Membership.end_date <= in_7_days)
     )).scalar_one()
 
-    expiring_30 = (await db.execute(
-        select(func.count(func.distinct(Membership.user_id)))
-        .join(User, User.id == Membership.user_id)
-        .where(*active_sub_filter, Membership.end_date <= in_30_days)
-    )).scalar_one()
 
     expired_this_month_subq = (
         select(Membership.user_id)
@@ -187,7 +180,6 @@ async def get_stats(
         plan_distribution=[PlanCount(plan=r.plan, count=r.count) for r in plan_rows],
         expiring_tomorrow=expiring_tomorrow,
         expiring_7_days=expiring_7,
-        expiring_30_days=expiring_30,
         renewal_rate_pct=renewal_rate_pct,
         new_members_this_month=new_members_this_month,
         renewed_this_month=renewed_this_month,
