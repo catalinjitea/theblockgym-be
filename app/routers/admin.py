@@ -43,27 +43,19 @@ class StatsResponse(BaseModel):
     plan_distribution: list[PlanCount]
     expiring_tomorrow: int
     expiring_7_days: int
+    plan_type_split: list[PlanTypeCount]
+
+class PeriodStatsResponse(BaseModel):
     renewal_rate_pct: Optional[float]
     new_members_this_month: int
     renewed_this_month: int
-    plan_type_split: list[PlanTypeCount]
 
 @router.get("/stats", response_model=StatsResponse)
 async def get_stats(
-    from_date: Optional[date] = Query(None),
-    to_date: Optional[date] = Query(None),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    now = datetime.combine(to_date, datetime.max.time().replace(microsecond=0)) if to_date else datetime.utcnow()
-
-    if from_date:
-        period_start = datetime.combine(from_date, datetime.min.time())
-    else:
-        ref = now.date()
-        prev18 = date(ref.year - 1 if ref.month == 1 else ref.year, 12 if ref.month == 1 else ref.month - 1, 18)
-        period_start = datetime.combine(prev18, datetime.min.time())
-
+    now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = now.replace(hour=23, minute=59, second=59)
     in_7_days = now + timedelta(days=7)
@@ -120,13 +112,52 @@ async def get_stats(
         .where(*active_sub_filter, Membership.end_date <= in_7_days)
     )).scalar_one()
 
+    plan_type_rows = (await db.execute(
+        select(MembershipPlan.type, func.count(func.distinct(Membership.user_id)).label("count"))
+        .join(MembershipPlan, and_(
+            MembershipPlan.key == Membership.plan,
+            MembershipPlan.amount == Membership.amount,
+        ))
+        .join(User, User.id == Membership.user_id)
+        .where(*active_sub_filter)
+        .group_by(MembershipPlan.type)
+    )).all()
+
+    return StatsResponse(
+        total_members=total,
+        active_subscriptions=active_subscriptions,
+        expired_subscription=expired_subscription,
+        never_subscribed=never_subscribed,
+        plan_distribution=[PlanCount(plan=r.plan, count=r.count) for r in plan_rows],
+        expiring_tomorrow=expiring_tomorrow,
+        expiring_7_days=expiring_7,
+        plan_type_split=[PlanTypeCount(type=r.type, count=r.count) for r in plan_type_rows],
+    )
+
+
+@router.get("/stats/period", response_model=PeriodStatsResponse)
+async def get_period_stats(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.utcnow()
+    period_end = datetime.combine(to_date, datetime.max.time().replace(microsecond=0)) if to_date else now
+
+    if from_date:
+        period_start = datetime.combine(from_date, datetime.min.time())
+    else:
+        today = now.date()
+        prev18 = date(today.year - 1 if today.month == 1 else today.year, 12 if today.month == 1 else today.month - 1, 18)
+        period_start = datetime.combine(prev18, datetime.min.time())
 
     expired_this_period_subq = (
         select(Membership.user_id)
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.end_date >= period_start,
-            Membership.end_date <= now,
+            Membership.end_date <= period_end,
             User.is_admin == False,
         )
         .distinct()
@@ -138,8 +169,8 @@ async def get_stats(
         select(func.count(func.distinct(Membership.user_id)))
         .where(
             Membership.user_id.in_(expired_this_period_subq),
-            Membership.start_date <= now,
-            Membership.end_date >= now,
+            Membership.start_date <= period_end,
+            Membership.end_date >= period_end,
         )
     )).scalar_one()
     renewal_rate_pct = round(renewed / total_expired_this_period * 100, 1) if total_expired_this_period > 0 else None
@@ -154,7 +185,7 @@ async def get_stats(
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.start_date >= period_start,
-            Membership.start_date <= now,
+            Membership.start_date <= period_end,
             User.is_admin == False,
             ~Membership.user_id.in_(had_membership_before_period_subq),
         )
@@ -165,36 +196,16 @@ async def get_stats(
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.start_date >= period_start,
-            Membership.start_date <= now,
+            Membership.start_date <= period_end,
             User.is_admin == False,
             Membership.user_id.in_(had_membership_before_period_subq),
         )
     )).scalar_one()
 
-    plan_type_rows = (await db.execute(
-        select(MembershipPlan.type, func.count(func.distinct(Membership.user_id)).label("count"))
-        .join(MembershipPlan, and_(
-            MembershipPlan.key == Membership.plan,
-            MembershipPlan.amount == Membership.amount,
-        ))
-        .join(User, User.id == Membership.user_id)
-        .where(*active_sub_filter)
-        .group_by(MembershipPlan.type)
-    )).all()
-    plan_type_split = [PlanTypeCount(type=r.type, count=r.count) for r in plan_type_rows]
-
-    return StatsResponse(
-        total_members=total,
-        active_subscriptions=active_subscriptions,
-        expired_subscription=expired_subscription,
-        never_subscribed=never_subscribed,
-        plan_distribution=[PlanCount(plan=r.plan, count=r.count) for r in plan_rows],
-        expiring_tomorrow=expiring_tomorrow,
-        expiring_7_days=expiring_7,
+    return PeriodStatsResponse(
         renewal_rate_pct=renewal_rate_pct,
         new_members_this_month=new_members_this_month,
         renewed_this_month=renewed_this_month,
-        plan_type_split=plan_type_split,
     )
 
 
