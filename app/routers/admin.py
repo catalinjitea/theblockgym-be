@@ -170,28 +170,30 @@ async def get_period_stats(
         prev_cycle_start = period_start
         prev_cycle_end = effective_end
 
-    expired_prev_equiv_subq = (
+    # Users who started a membership in the previous equivalent window and it has since expired
+    prev_cohort_subq = (
         select(Membership.user_id)
         .join(User, User.id == Membership.user_id)
         .where(
-            Membership.end_date >= prev_cycle_start,
-            Membership.end_date <= prev_cycle_end,
+            Membership.start_date >= prev_cycle_start,
+            Membership.start_date <= prev_cycle_end,
+            Membership.end_date < now,
             User.is_admin == False,
         )
         .distinct()
     )
-    total_expired_prev = (await db.execute(
-        select(func.count()).select_from(expired_prev_equiv_subq.subquery())
+    total_prev_cohort = (await db.execute(
+        select(func.count()).select_from(prev_cohort_subq.subquery())
     )).scalar_one()
     renewed_from_prev = (await db.execute(
         select(func.count(func.distinct(Membership.user_id)))
         .where(
-            Membership.user_id.in_(expired_prev_equiv_subq),
+            Membership.user_id.in_(prev_cohort_subq),
             Membership.start_date >= period_start,
             Membership.start_date <= effective_end,
         )
     )).scalar_one()
-    renewal_rate_pct = round(renewed_from_prev / total_expired_prev * 100, 1) if total_expired_prev > 0 else None
+    renewal_rate_pct = round(renewed_from_prev / total_prev_cohort * 100, 1) if total_prev_cohort > 0 else None
 
     had_membership_before_period_subq = (
         select(Membership.user_id)
