@@ -50,13 +50,22 @@ class StatsResponse(BaseModel):
 
 @router.get("/stats", response_model=StatsResponse)
 async def get_stats(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    now = datetime.utcnow()
-    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_end = tomorrow_start.replace(hour=23, minute=59, second=59)
+    now = datetime.combine(to_date, datetime.max.time().replace(microsecond=0)) if to_date else datetime.utcnow()
+
+    if from_date:
+        period_start = datetime.combine(from_date, datetime.min.time())
+    else:
+        ref = now.date()
+        prev18 = date(ref.year - 1 if ref.month == 1 else ref.year, 12 if ref.month == 1 else ref.month - 1, 18)
+        period_start = datetime.combine(prev18, datetime.min.time())
+
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now.replace(hour=23, minute=59, second=59)
     in_7_days = now + timedelta(days=7)
 
     total = (await db.execute(
@@ -102,7 +111,7 @@ async def get_stats(
     expiring_tomorrow = (await db.execute(
         select(func.count(func.distinct(Membership.user_id)))
         .join(User, User.id == Membership.user_id)
-        .where(*active_sub_filter, Membership.end_date >= tomorrow_start, Membership.end_date <= tomorrow_end)
+        .where(*active_sub_filter, Membership.end_date >= today_start, Membership.end_date <= today_end)
     )).scalar_one()
 
     expiring_7 = (await db.execute(
@@ -112,41 +121,42 @@ async def get_stats(
     )).scalar_one()
 
 
-    expired_this_month_subq = (
+    expired_this_period_subq = (
         select(Membership.user_id)
         .join(User, User.id == Membership.user_id)
         .where(
-            Membership.end_date >= this_month_start,
+            Membership.end_date >= period_start,
             Membership.end_date <= now,
             User.is_admin == False,
         )
         .distinct()
     )
-    total_expired_this_month = (await db.execute(
-        select(func.count()).select_from(expired_this_month_subq.subquery())
+    total_expired_this_period = (await db.execute(
+        select(func.count()).select_from(expired_this_period_subq.subquery())
     )).scalar_one()
     renewed = (await db.execute(
         select(func.count(func.distinct(Membership.user_id)))
         .where(
-            Membership.user_id.in_(expired_this_month_subq),
+            Membership.user_id.in_(expired_this_period_subq),
             Membership.start_date <= now,
             Membership.end_date >= now,
         )
     )).scalar_one()
-    renewal_rate_pct = round(renewed / total_expired_this_month * 100, 1) if total_expired_this_month > 0 else None
+    renewal_rate_pct = round(renewed / total_expired_this_period * 100, 1) if total_expired_this_period > 0 else None
 
-    had_membership_before_this_month_subq = (
+    had_membership_before_period_subq = (
         select(Membership.user_id)
-        .where(Membership.start_date < this_month_start)
+        .where(Membership.start_date < period_start)
         .distinct()
     )
     new_members_this_month = (await db.execute(
         select(func.count(func.distinct(Membership.user_id)))
         .join(User, User.id == Membership.user_id)
         .where(
-            Membership.start_date >= this_month_start,
+            Membership.start_date >= period_start,
+            Membership.start_date <= now,
             User.is_admin == False,
-            ~Membership.user_id.in_(had_membership_before_this_month_subq),
+            ~Membership.user_id.in_(had_membership_before_period_subq),
         )
     )).scalar_one()
 
@@ -154,9 +164,10 @@ async def get_stats(
         select(func.count(func.distinct(Membership.user_id)))
         .join(User, User.id == Membership.user_id)
         .where(
-            Membership.start_date >= this_month_start,
+            Membership.start_date >= period_start,
+            Membership.start_date <= now,
             User.is_admin == False,
-            Membership.user_id.in_(had_membership_before_this_month_subq),
+            Membership.user_id.in_(had_membership_before_period_subq),
         )
     )).scalar_one()
 
