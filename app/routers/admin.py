@@ -1,3 +1,4 @@
+import calendar
 import uuid
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -152,28 +153,45 @@ async def get_period_stats(
         prev18 = date(today.year - 1 if today.month == 1 else today.year, 12 if today.month == 1 else today.month - 1, 18)
         period_start = datetime.combine(prev18, datetime.min.time())
 
-    expired_this_period_subq = (
+    # Renewal rate: compare equivalent days into each cycle.
+    # e.g. if from_date=May 18 and today=May 26, compare Apr 18–Apr 26 expirations
+    # against renewals that started May 18–May 26.
+    effective_end = min(now, period_end)
+    days_into = max((effective_end.date() - from_date).days, 0) if from_date else 0
+
+    if from_date:
+        prev_m = from_date.month - 1 if from_date.month > 1 else 12
+        prev_y = from_date.year if from_date.month > 1 else from_date.year - 1
+        prev_day = min(from_date.day, calendar.monthrange(prev_y, prev_m)[1])
+        prev_cycle_start = datetime.combine(date(prev_y, prev_m, prev_day), datetime.min.time())
+        prev_cycle_end = prev_cycle_start + timedelta(days=days_into)
+        prev_cycle_end = prev_cycle_end.replace(hour=23, minute=59, second=59)
+    else:
+        prev_cycle_start = period_start
+        prev_cycle_end = effective_end
+
+    expired_prev_equiv_subq = (
         select(Membership.user_id)
         .join(User, User.id == Membership.user_id)
         .where(
-            Membership.end_date >= period_start,
-            Membership.end_date <= period_end,
+            Membership.end_date >= prev_cycle_start,
+            Membership.end_date <= prev_cycle_end,
             User.is_admin == False,
         )
         .distinct()
     )
-    total_expired_this_period = (await db.execute(
-        select(func.count()).select_from(expired_this_period_subq.subquery())
+    total_expired_prev = (await db.execute(
+        select(func.count()).select_from(expired_prev_equiv_subq.subquery())
     )).scalar_one()
-    renewed = (await db.execute(
+    renewed_from_prev = (await db.execute(
         select(func.count(func.distinct(Membership.user_id)))
         .where(
-            Membership.user_id.in_(expired_this_period_subq),
-            Membership.start_date <= period_end,
-            Membership.end_date >= period_end,
+            Membership.user_id.in_(expired_prev_equiv_subq),
+            Membership.start_date >= period_start,
+            Membership.start_date <= effective_end,
         )
     )).scalar_one()
-    renewal_rate_pct = round(renewed / total_expired_this_period * 100, 1) if total_expired_this_period > 0 else None
+    renewal_rate_pct = round(renewed_from_prev / total_expired_prev * 100, 1) if total_expired_prev > 0 else None
 
     had_membership_before_period_subq = (
         select(Membership.user_id)
