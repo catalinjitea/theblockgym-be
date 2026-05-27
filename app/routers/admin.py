@@ -205,7 +205,7 @@ async def get_period_stats(
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.start_date >= period_start,
-            Membership.start_date <= period_end,
+            Membership.start_date <= effective_end,
             User.is_admin == False,
             ~Membership.user_id.in_(had_membership_before_period_subq),
         )
@@ -216,7 +216,7 @@ async def get_period_stats(
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.start_date >= period_start,
-            Membership.start_date <= period_end,
+            Membership.start_date <= effective_end,
             User.is_admin == False,
             Membership.user_id.in_(had_membership_before_period_subq),
         )
