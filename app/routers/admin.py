@@ -48,6 +48,8 @@ class StatsResponse(BaseModel):
 
 class PeriodStatsResponse(BaseModel):
     renewal_rate_pct: Optional[float]
+    renewal_cohort_size: int
+    renewal_renewed_count: int
     new_members_this_month: int
     renewed_this_month: int
 
@@ -158,6 +160,7 @@ async def get_period_stats(
     # against renewals that started May 18–May 26.
     effective_end = min(now, period_end)
     days_into = max((effective_end.date() - from_date).days, 0) if from_date else 0
+    tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     if from_date:
         prev_m = from_date.month - 1 if from_date.month > 1 else 12
@@ -170,14 +173,14 @@ async def get_period_stats(
         prev_cycle_start = period_start
         prev_cycle_end = effective_end
 
-    # Users who started a membership in the previous equivalent window and it has since expired
+    # Users who started a membership in the previous equivalent window and it expires today or earlier
     prev_cohort_subq = (
         select(Membership.user_id)
         .join(User, User.id == Membership.user_id)
         .where(
             Membership.start_date >= prev_cycle_start,
             Membership.start_date <= prev_cycle_end,
-            Membership.end_date < now,
+            Membership.end_date < tomorrow_start,
             User.is_admin == False,
         )
         .distinct()
@@ -224,6 +227,8 @@ async def get_period_stats(
 
     return PeriodStatsResponse(
         renewal_rate_pct=renewal_rate_pct,
+        renewal_cohort_size=total_prev_cohort,
+        renewal_renewed_count=renewed_from_prev,
         new_members_this_month=new_members_this_month,
         renewed_this_month=renewed_this_month,
     )
