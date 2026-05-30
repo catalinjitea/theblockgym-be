@@ -80,20 +80,20 @@ async def create_checkout_session(
     if not plan:
         raise HTTPException(status_code=400, detail=f"Plan '{body.plan}' ({body.plan_type}) not found.")
 
-    # Reject if start_date falls within any active membership
+    # Reject if the proposed membership date range overlaps any existing membership
     requested_start = datetime.combine(body.start_date, datetime.min.time())
+    new_end = compute_end_date(requested_start, plan)
     overlap = await db.execute(
         select(Membership).where(
             Membership.user_id == current_user.id,
-            Membership.status == "activ",
-            Membership.start_date <= requested_start,
+            Membership.start_date < new_end,
             Membership.end_date > requested_start,
         )
     )
     if overlap.scalar_one_or_none():
         raise HTTPException(
             status_code=400,
-            detail="Data selectată se suprapune cu un abonament activ.",
+            detail="Data selectată se suprapune cu un abonament existent.",
         )
 
     from netopia_sdk.requests.models import (
@@ -289,6 +289,17 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
 
     start = start_date
     end = compute_end_date(start, plan)
+
+    overlap_check = await db.execute(
+        select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.start_date < end,
+            Membership.end_date > start,
+        )
+    )
+    if overlap_check.scalar_one_or_none():
+        print(f"⚠️  Membership overlap for user {user.email}, order {order_id} — skipping creation.")
+        return JSONResponse({"errorCode": 0})
 
     membership = Membership(
         user_id=user.id,

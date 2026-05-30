@@ -210,6 +210,19 @@ async def activate_qr_card(
     start = datetime.combine(body.start_date, datetime.min.time())
     end = compute_end_date(start, plan)
 
+    overlap_check = await db.execute(
+        select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.start_date < end,
+            Membership.end_date > start,
+        )
+    )
+    if overlap_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Data selectată se suprapune cu un abonament existent.",
+        )
+
     membership = Membership(
         user_id=user.id,
         plan=plan.key,
@@ -262,6 +275,19 @@ async def renew_qr_card(
 
     start = datetime.combine(body.start_date, datetime.min.time())
     end = compute_end_date(start, plan)
+
+    overlap_check = await db.execute(
+        select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.start_date < end,
+            Membership.end_date > start,
+        )
+    )
+    if overlap_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Data selectată se suprapune cu un abonament existent.",
+        )
 
     membership = Membership(
         user_id=user.id,
