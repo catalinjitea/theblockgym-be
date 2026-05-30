@@ -547,3 +547,24 @@ async def update_user(
     if body.age is not None: user.age = body.age
 
     return user
+
+
+# ── PATCH /admin/users/{id}/password ─────────────────────────────────────────
+class AdminChangePasswordRequest(BaseModel):
+    new_password: str
+
+@router.patch("/users/{user_id}/password", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_change_user_password(
+    user_id: int,
+    body: AdminChangePasswordRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parola trebuie să aibă cel puțin 8 caractere.")
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
