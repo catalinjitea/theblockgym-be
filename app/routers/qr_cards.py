@@ -17,6 +17,7 @@ from app.core.websocket import manager
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
+from app.models.scan_entry import ScanEntry
 from app.models.user import User
 from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse, RenewQRCardRequest
 
@@ -64,6 +65,9 @@ async def verify_qr_card(
     )
     card = result.scalar_one_or_none()
 
+    async def record_and_broadcast(status: str, qr_card_id=None) -> None:
+        db.add(ScanEntry(code=code, status=status, qr_card_id=qr_card_id))
+
     # Card not found
     if not card:
         payload = {
@@ -71,6 +75,7 @@ async def verify_qr_card(
             "code": code,
             "message": "Card necunoscut.",
         }
+        await record_and_broadcast("invalid")
         await manager.broadcast(payload)
         return payload
 
@@ -81,6 +86,7 @@ async def verify_qr_card(
             "code": code,
             "message": "Card inactiv — nu este asociat unui abonament.",
         }
+        await record_and_broadcast("inactive", card.id)
         await manager.broadcast(payload)
         return payload
 
@@ -96,6 +102,7 @@ async def verify_qr_card(
             "code": code,
             "message": "Abonament neînceput.",
         }
+        await record_and_broadcast("inactive", card.id)
         await manager.broadcast(payload)
         return payload
 
@@ -123,6 +130,7 @@ async def verify_qr_card(
                 "start_date": membership.start_date.isoformat(),
                 "expiry_date": membership.end_date.isoformat(),
             }
+            await record_and_broadcast("expired", card.id)
             await manager.broadcast(payload)
             return payload
 
@@ -136,6 +144,7 @@ async def verify_qr_card(
         "start_date": membership.start_date.isoformat(),
         "expiry_date": membership.end_date.isoformat(),
     }
+    await record_and_broadcast("valid", card.id)
     await manager.broadcast(payload)
     return payload
 
