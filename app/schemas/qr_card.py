@@ -2,6 +2,16 @@ from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel
 
+class ScanEntryResponse(BaseModel):
+    id: int
+    code: str
+    status: str
+    scanned_at: datetime
+    member_name: Optional[str] = None
+    plan: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
 class QRCardResponse(BaseModel):
     id: int
     code: str

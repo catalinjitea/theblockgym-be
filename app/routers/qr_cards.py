@@ -4,9 +4,9 @@ import zipfile
 from datetime import datetime
 
 import qrcode
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,7 +19,7 @@ from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
 from app.models.scan_entry import ScanEntry
 from app.models.user import User
-from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse, RenewQRCardRequest
+from app.schemas.qr_card import ActivateQRCardRequest, GenerateQRCardsRequest, QRCardResponse, RenewQRCardRequest, ScanEntryResponse
 
 router = APIRouter()
 
@@ -187,6 +187,41 @@ async def list_qr_cards(
 ):
     result = await db.execute(select(QRCard).order_by(QRCard.created_at.desc()))
     return result.scalars().all()
+
+
+# ── GET /admin/qrcards/entries ───────────────────────────────────────────────
+@router.get("/entries", response_model=list[ScanEntryResponse])
+async def list_scan_entries(
+    response: Response,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    total = (await db.execute(select(func.count()).select_from(ScanEntry))).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
+
+    rows = (await db.execute(
+        select(ScanEntry, User.first_name, User.last_name, Membership.plan)
+        .outerjoin(QRCard, ScanEntry.qr_card_id == QRCard.id)
+        .outerjoin(Membership, QRCard.membership_id == Membership.id)
+        .outerjoin(User, Membership.user_id == User.id)
+        .order_by(ScanEntry.scanned_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )).all()
+
+    return [
+        ScanEntryResponse(
+            id=row.ScanEntry.id,
+            code=row.ScanEntry.code,
+            status=row.ScanEntry.status,
+            scanned_at=row.ScanEntry.scanned_at,
+            member_name=f"{row.first_name} {row.last_name}" if row.first_name else None,
+            plan=row.plan,
+        )
+        for row in rows
+    ]
 
 
 # ── PATCH /admin/qrcards/{code}/activate ─────────────────────────────────────
