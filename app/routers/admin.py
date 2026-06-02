@@ -251,17 +251,16 @@ async def get_active_over_time(
     if not rows:
         return []
 
-    first_month = min(r.start_date for r in rows).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    first_day = min(r.start_date for r in rows).replace(hour=0, minute=0, second=0, microsecond=0)
 
     result = []
-    current = first_month
-    while current <= now:
-        next_month = (current + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        month_end = next_month - timedelta(seconds=1)
-        check_point = min(month_end, now)
+    current = first_day
+    while current.date() <= now.date():
+        day_end = current.replace(hour=23, minute=59, second=59)
+        check_point = min(day_end, now)
         active_count = len({r.user_id for r in rows if r.start_date <= check_point and r.end_date >= check_point})
-        result.append({"period": current.strftime("%Y-%m"), "value": active_count})
-        current = next_month
+        result.append({"period": current.strftime("%Y-%m-%d"), "value": active_count})
+        current += timedelta(days=1)
 
     return result
 
