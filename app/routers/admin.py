@@ -234,6 +234,38 @@ async def get_period_stats(
     )
 
 
+# ── GET /admin/stats/active-over-time ────────────────────────────────────────
+@router.get("/stats/active-over-time", response_model=list[dict])
+async def get_active_over_time(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.utcnow()
+
+    rows = (await db.execute(
+        select(Membership.user_id, Membership.start_date, Membership.end_date)
+        .join(User, User.id == Membership.user_id)
+        .where(User.is_admin == False)
+    )).all()
+
+    if not rows:
+        return []
+
+    first_month = min(r.start_date for r in rows).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    result = []
+    current = first_month
+    while current <= now:
+        next_month = (current + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_end = next_month - timedelta(seconds=1)
+        check_point = min(month_end, now)
+        active_count = len({r.user_id for r in rows if r.start_date <= check_point and r.end_date >= check_point})
+        result.append({"period": current.strftime("%Y-%m"), "value": active_count})
+        current = next_month
+
+    return result
+
+
 # ── GET /admin/stats/registrations ───────────────────────────────────────────
 class RegistrationPoint(BaseModel):
     period: str
