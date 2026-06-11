@@ -15,6 +15,8 @@ class Membership(Base):
     amount:            Mapped[int]           = mapped_column(Integer, nullable=False)
     start_date:        Mapped[datetime]      = mapped_column(DateTime, nullable=False)
     end_date:          Mapped[datetime]      = mapped_column(DateTime, nullable=False)
+    freeze_start:      Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    freeze_end:        Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     payment_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at:        Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 

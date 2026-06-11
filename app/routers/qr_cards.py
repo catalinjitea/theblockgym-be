@@ -106,6 +106,22 @@ async def verify_qr_card(
         await manager.broadcast(payload)
         return payload
 
+    # Membership frozen
+    if (membership.freeze_start is not None
+            and membership.freeze_end is not None
+            and membership.freeze_start <= now <= membership.freeze_end):
+        payload = {
+            "status": "frozen",
+            "code": code,
+            "message": "Abonament înghețat.",
+            "member_name": f"{user.first_name} {user.last_name}",
+            "plan": membership.plan,
+            "freeze_until": membership.freeze_end.isoformat(),
+        }
+        await record_and_broadcast("frozen", card.id)
+        await manager.broadcast(payload)
+        return payload
+
     # Membership expired — check for an advance-purchased membership that is now active
     if membership.end_date < now:
         advance_result = await db.execute(

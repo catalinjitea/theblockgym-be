@@ -19,4 +19,5 @@ class MembershipPlan(Base):
     amount:          Mapped[int]           = mapped_column(Integer, nullable=False)   # in bani
     duration_days:   Mapped[int]           = mapped_column(Integer, nullable=False)
     duration_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_freeze_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)

@@ -1,4 +1,5 @@
 import calendar
+import math
 import uuid
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -342,6 +343,7 @@ class MembershipPlanResponse(BaseModel):
     name: str
     amount: int
     duration_days: int
+    max_freeze_days: Optional[int] = None
     is_active: bool
 
     model_config = {"from_attributes": True}
@@ -591,6 +593,81 @@ async def update_user(
     if body.age is not None: user.age = body.age
 
     return user
+
+
+# ── POST /admin/memberships/{id}/freeze ──────────────────────────────────────
+class FreezeMembershipRequest(BaseModel):
+    freeze_days: int
+
+@router.post("/memberships/{membership_id}/freeze", response_model=MembershipResponse)
+async def freeze_membership(
+    membership_id: int,
+    body: FreezeMembershipRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Membership).where(Membership.id == membership_id))
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
+
+    now = datetime.utcnow()
+
+    if membership.start_date > now or membership.end_date < now:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul nu este activ.")
+
+    if (membership.freeze_start is not None
+            and membership.freeze_end is not None
+            and membership.freeze_end > now):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul este deja înghețat.")
+
+    plan_result = await db.execute(
+        select(MembershipPlan).where(
+            MembershipPlan.key == membership.plan,
+            MembershipPlan.amount == membership.amount,
+        )
+    )
+    plan = plan_result.scalar_one_or_none()
+    if not plan or not plan.max_freeze_days:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planul nu permite înghețarea abonamentului.")
+
+    if body.freeze_days < 1 or body.freeze_days > plan.max_freeze_days:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Perioada de îngheț trebuie să fie între 1 și {plan.max_freeze_days} zile.",
+        )
+
+    membership.freeze_start = now
+    membership.freeze_end = now + timedelta(days=body.freeze_days)
+    membership.end_date += timedelta(days=body.freeze_days)
+
+    return membership
+
+
+# ── POST /admin/memberships/{id}/unfreeze ─────────────────────────────────────
+@router.post("/memberships/{membership_id}/unfreeze", response_model=MembershipResponse)
+async def unfreeze_membership(
+    membership_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Membership).where(Membership.id == membership_id))
+    membership = result.scalar_one_or_none()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
+
+    now = datetime.utcnow()
+
+    if (membership.freeze_start is None
+            or membership.freeze_end is None
+            or membership.freeze_end <= now):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul nu este înghețat.")
+
+    remaining = membership.freeze_end - now
+    membership.end_date -= remaining
+    membership.freeze_end = now
+
+    return membership
 
 
 # ── PATCH /admin/users/{id}/password ─────────────────────────────────────────
