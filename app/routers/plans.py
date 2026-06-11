@@ -16,6 +16,7 @@ class PlanResponse(BaseModel):
     name: str
     amount: int
     duration_days: int
+    max_freeze_days: int | None = None
 
     model_config = {"from_attributes": True}
 
