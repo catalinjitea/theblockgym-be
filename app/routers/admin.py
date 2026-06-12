@@ -1,7 +1,7 @@
 import calendar
 import math
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from typing import Literal, Optional
 from pydantic import BaseModel
@@ -597,7 +597,8 @@ async def update_user(
 
 # ── POST /admin/memberships/{id}/freeze ──────────────────────────────────────
 class FreezeMembershipRequest(BaseModel):
-    freeze_days: int
+    freeze_start: date
+    freeze_end: date
 
 @router.post("/memberships/{membership_id}/freeze", response_model=MembershipResponse)
 async def freeze_membership(
@@ -621,6 +622,14 @@ async def freeze_membership(
             and membership.freeze_end > now):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul este deja înghețat.")
 
+    if body.freeze_start < date.today():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data de început nu poate fi în trecut.")
+
+    if body.freeze_end <= body.freeze_start:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data de sfârșit trebuie să fie după data de început.")
+
+    freeze_days = (body.freeze_end - body.freeze_start).days
+
     plan_result = await db.execute(
         select(MembershipPlan).where(
             MembershipPlan.key == membership.plan,
@@ -631,15 +640,15 @@ async def freeze_membership(
     if not plan or not plan.max_freeze_days:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planul nu permite înghețarea abonamentului.")
 
-    if body.freeze_days < 1 or body.freeze_days > plan.max_freeze_days:
+    if freeze_days > plan.max_freeze_days:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Perioada de îngheț trebuie să fie între 1 și {plan.max_freeze_days} zile.",
+            detail=f"Perioada de îngheț nu poate depăși {plan.max_freeze_days} zile.",
         )
 
-    membership.freeze_start = now
-    membership.freeze_end = now + timedelta(days=body.freeze_days)
-    membership.end_date += timedelta(days=body.freeze_days)
+    membership.freeze_start = datetime.combine(body.freeze_start, time.min)
+    membership.freeze_end = datetime.combine(body.freeze_end, time(23, 59, 59))
+    membership.end_date += timedelta(days=freeze_days)
 
     return membership
 
