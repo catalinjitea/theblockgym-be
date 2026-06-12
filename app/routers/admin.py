@@ -672,8 +672,10 @@ async def unfreeze_membership(
             or membership.freeze_end <= now):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul nu este înghețat.")
 
-    remaining = membership.freeze_end - now
-    membership.end_date -= remaining
+    # For an active freeze: give back days remaining from now.
+    # For a scheduled (future) freeze: give back the full freeze duration.
+    effective_start = max(now, membership.freeze_start)
+    membership.end_date -= membership.freeze_end - effective_start
     membership.freeze_end = now
 
     return membership
