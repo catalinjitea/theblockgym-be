@@ -22,5 +22,6 @@ class User(Base):
     created_at:                    Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
     password_reset_token:          Mapped[Optional[str]]      = mapped_column(String(255), nullable=True, default=None)
     password_reset_token_expires:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    marketing_unsubscribed:        Mapped[bool]               = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     memberships: Mapped[List["Membership"]] = relationship("Membership", back_populates="user", order_by="Membership.created_at.desc()")

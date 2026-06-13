@@ -1,5 +1,6 @@
 import calendar
 import math
+import os
 import uuid
 from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -12,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.membership import compute_end_date
 from app.core.dependencies import require_admin
-from app.core.security import hash_password
+from app.core.security import create_unsubscribe_token, hash_password
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
@@ -700,3 +701,42 @@ async def admin_change_user_password(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Parola trebuie să aibă cel puțin 8 caractere.")
     user.hashed_password = hash_password(body.new_password)
     await db.commit()
+
+
+# ── GET /admin/marketing/export-csv ──────────────────────────────────────────
+@router.get("/marketing/export-csv", dependencies=[Depends(require_admin)])
+async def export_marketing_csv(
+    audience: Literal["all", "no_membership", "expired"] = Query("all"),
+    db: AsyncSession = Depends(get_db),
+):
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    if audience == "no_membership":
+        stmt = select(User).where(
+            User.marketing_unsubscribed == False,
+            ~User.memberships.any(),
+        )
+    elif audience == "expired":
+        stmt = select(User).where(
+            User.marketing_unsubscribed == False,
+            User.memberships.any(Membership.end_date < datetime.utcnow()),
+            ~User.memberships.any(Membership.end_date >= datetime.utcnow()),
+        )
+    else:
+        stmt = select(User)
+
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+
+    rows = ["email,unsubscribed,unsubscribe_url"]
+    for user in users:
+        token = create_unsubscribe_token(user.id)
+        url = f"{frontend_url}/unsubscribe?token={token}"
+        rows.append(f"{user.email},{str(user.marketing_unsubscribed).lower()},{url}")
+
+    csv_content = "\n".join(rows)
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="marketing_{audience}.csv"'},
+    )

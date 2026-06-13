@@ -1,7 +1,7 @@
 import os
 import secrets
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,8 @@ from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ADMIN_TOKEN_EXPIRE_MINUTES,
     create_access_token,
+    create_unsubscribe_token,
+    decode_unsubscribe_token,
     hash_password,
     verify_password,
 )
@@ -190,3 +192,25 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
     user.password_reset_token = None
     user.password_reset_token_expires = None
     return {"status": "password reset"}
+
+
+# ── GET /auth/unsubscribe ─────────────────────────────────────────────────────
+@router.get("/unsubscribe", status_code=status.HTTP_200_OK)
+async def unsubscribe(token: str = Query(...), db: AsyncSession = Depends(get_db)):
+    user_id = decode_unsubscribe_token(token)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid unsubscribe link.")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    user.marketing_unsubscribed = True
+    return {"status": "unsubscribed"}
+
+
+# ── GET /auth/unsubscribe-token/{user_id}  (admin only) ───────────────────────
+@router.get("/unsubscribe-token/{user_id}", dependencies=[Depends(require_admin)])
+async def get_unsubscribe_token(user_id: int):
+    return {"token": create_unsubscribe_token(user_id)}

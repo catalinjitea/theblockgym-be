@@ -30,3 +30,16 @@ def decode_access_token(token: str) -> Optional[str]:
         return payload.get("sub")
     except JWTError:
         return None
+
+def create_unsubscribe_token(user_id: int) -> str:
+    return jwt.encode({"sub": str(user_id), "purpose": "unsubscribe"}, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_unsubscribe_token(token: str) -> Optional[int]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+        if payload.get("purpose") != "unsubscribe":
+            return None
+        sub = payload.get("sub")
+        return int(sub) if sub else None
+    except (JWTError, ValueError):
+        return None
