@@ -253,15 +253,16 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         return JSONResponse({"errorCode": 0})
 
     # Decode: GYM-{user_id}-{plan}-{plan_type_code}-{start_date}-{timestamp}
+    # Plan keys may contain hyphens (e.g. "3luni-vara"), so parse from both ends.
     parts = order_id.split("-")
     if len(parts) < 6:
         return JSONResponse({"errorCode": 0})
 
     try:
         user_id = int(parts[1])
-        plan_key = parts[2]
-        plan_type_code = parts[3]
-        start_date_str = parts[4]
+        plan_type_code = parts[-3]
+        start_date_str = parts[-2]
+        plan_key = "-".join(parts[2:-3])
         start_date = datetime.strptime(start_date_str, "%Y%m%d")
     except (ValueError, IndexError):
         return JSONResponse({"errorCode": 0})
