@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import contains_eager
 
 from app.core.database import get_db
 from app.core.membership import compute_end_date
@@ -318,13 +319,19 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         select(QRCard)
         .join(Membership, QRCard.membership_id == Membership.id)
         .where(Membership.user_id == user.id, QRCard.type == "digital")
+        .options(contains_eager(QRCard.membership))
         .order_by(QRCard.created_at.desc())
         .limit(1)
     )
     existing_qr = existing_qr_result.scalar_one_or_none()
 
     if existing_qr:
-        existing_qr.membership_id = membership.id
+        current_active = (
+            existing_qr.membership is not None
+            and existing_qr.membership.end_date >= datetime.utcnow()
+        )
+        if not current_active:
+            existing_qr.membership_id = membership.id
         existing_qr.is_active = True
     else:
         db.add(QRCard(
