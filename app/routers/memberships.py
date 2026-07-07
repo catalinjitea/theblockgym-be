@@ -10,8 +10,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import require_user
+from app.core.membership import get_plan_freeze_days_map, resolve_freeze_days
 from app.models.membership import Membership
-from app.models.membership_plan import MembershipPlan
 from app.models.qr_card import QRCard
 from app.models.user import User
 from app.routers.qr_cards import generate_qr_image
@@ -30,7 +30,12 @@ async def get_my_membership(
         .where(Membership.user_id == current_user.id, Membership.status == "activ")
         .order_by(Membership.created_at.desc())
     )
-    return result.scalars().first()
+    membership = result.scalars().first()
+    if not membership:
+        return None
+    response = MembershipResponse.model_validate(membership)
+    response.max_freeze_days = await resolve_freeze_days(db, membership)
+    return response
 
 
 # ── GET /memberships/me/qr ────────────────────────────────────────────────────
@@ -68,7 +73,14 @@ async def get_my_membership_history(
         .where(Membership.user_id == current_user.id)
         .order_by(Membership.created_at.desc())
     )
-    return result.scalars().all()
+    memberships = result.scalars().all()
+    freeze_days_by_key = await get_plan_freeze_days_map(db)
+    responses = []
+    for membership in memberships:
+        response = MembershipResponse.model_validate(membership)
+        response.max_freeze_days = freeze_days_by_key.get(membership.plan)
+        responses.append(response)
+    return responses
 
 
 # ── POST /memberships/me/freeze ───────────────────────────────────────────────
@@ -107,27 +119,23 @@ async def freeze_my_membership(
 
     freeze_days = (body.freeze_end - body.freeze_start).days
 
-    plan_result = await db.execute(
-        select(MembershipPlan).where(
-            MembershipPlan.key == membership.plan,
-            MembershipPlan.amount == membership.amount,
-        )
-    )
-    plan = plan_result.scalar_one_or_none()
-    if not plan or not plan.max_freeze_days:
+    max_freeze_days = await resolve_freeze_days(db, membership)
+    if not max_freeze_days:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planul nu permite înghețarea abonamentului.")
 
-    if freeze_days > plan.max_freeze_days:
+    if freeze_days > max_freeze_days:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Perioada de îngheț nu poate depăși {plan.max_freeze_days} zile.",
+            detail=f"Perioada de îngheț nu poate depăși {max_freeze_days} zile.",
         )
 
     membership.freeze_start = datetime.combine(body.freeze_start, time.min)
     membership.freeze_end = datetime.combine(body.freeze_end, time(23, 59, 59))
     membership.end_date += timedelta(days=freeze_days)
 
-    return membership
+    response = MembershipResponse.model_validate(membership)
+    response.max_freeze_days = max_freeze_days
+    return response
 
 
 # ── POST /memberships/me/unfreeze ─────────────────────────────────────────────

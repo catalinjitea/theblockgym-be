@@ -12,6 +12,7 @@ class MembershipResponse(BaseModel):
     freeze_start: Optional[datetime] = None
     freeze_end: Optional[datetime] = None
     created_at: datetime
+    max_freeze_days: Optional[int] = None
 
     @computed_field
     @property

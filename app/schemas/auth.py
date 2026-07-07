@@ -31,6 +31,7 @@ class LatestMembershipInfo(BaseModel):
     status: str
     freeze_start: Optional[datetime] = None
     freeze_end: Optional[datetime] = None
+    max_freeze_days: Optional[int] = None
 
     @computed_field
     @property
@@ -56,10 +57,13 @@ class UserResponse(BaseModel):
     latest_membership: Optional[LatestMembershipInfo] = None
 
     @classmethod
-    def from_orm_with_membership(cls, user):
+    def from_orm_with_membership(cls, user, freeze_days_by_key: Optional[dict[str, int]] = None):
         obj = cls.model_validate(user)
         if user.memberships:
-            obj.latest_membership = LatestMembershipInfo.model_validate(user.memberships[0])
+            latest = user.memberships[0]
+            obj.latest_membership = LatestMembershipInfo.model_validate(latest)
+            if freeze_days_by_key is not None:
+                obj.latest_membership.max_freeze_days = freeze_days_by_key.get(latest.plan)
         return obj
 
     model_config = {"from_attributes": True}

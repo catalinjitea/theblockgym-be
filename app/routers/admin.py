@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.membership import compute_end_date
+from app.core.membership import compute_end_date, get_plan_freeze_days_map, resolve_freeze_days
 from app.core.dependencies import require_admin
 from app.core.security import create_unsubscribe_token, hash_password
 from app.models.membership import Membership
@@ -333,7 +333,8 @@ async def list_users(
     )
     response.headers["X-Total-Count"] = str(total)
     users = result.scalars().all()
-    return [UserResponse.from_orm_with_membership(u) for u in users]
+    freeze_days_by_key = await get_plan_freeze_days_map(db)
+    return [UserResponse.from_orm_with_membership(u, freeze_days_by_key) for u in users]
 
 
 # ── GET /admin/plans ──────────────────────────────────────────────────────────
@@ -380,7 +381,8 @@ async def search_users(
         .order_by(User.last_name, User.first_name)
     )
     users = result.scalars().all()
-    return [UserResponse.from_orm_with_membership(u) for u in users]
+    freeze_days_by_key = await get_plan_freeze_days_map(db)
+    return [UserResponse.from_orm_with_membership(u, freeze_days_by_key) for u in users]
 
 
 # ── POST /admin/users ─────────────────────────────────────────────────────────
@@ -631,27 +633,23 @@ async def freeze_membership(
 
     freeze_days = (body.freeze_end - body.freeze_start).days
 
-    plan_result = await db.execute(
-        select(MembershipPlan).where(
-            MembershipPlan.key == membership.plan,
-            MembershipPlan.amount == membership.amount,
-        )
-    )
-    plan = plan_result.scalar_one_or_none()
-    if not plan or not plan.max_freeze_days:
+    max_freeze_days = await resolve_freeze_days(db, membership)
+    if not max_freeze_days:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planul nu permite înghețarea abonamentului.")
 
-    if freeze_days > plan.max_freeze_days:
+    if freeze_days > max_freeze_days:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Perioada de îngheț nu poate depăși {plan.max_freeze_days} zile.",
+            detail=f"Perioada de îngheț nu poate depăși {max_freeze_days} zile.",
         )
 
     membership.freeze_start = datetime.combine(body.freeze_start, time.min)
     membership.freeze_end = datetime.combine(body.freeze_end, time(23, 59, 59))
     membership.end_date += timedelta(days=freeze_days)
 
-    return membership
+    response = MembershipResponse.model_validate(membership)
+    response.max_freeze_days = max_freeze_days
+    return response
 
 
 # ── POST /admin/memberships/{id}/unfreeze ─────────────────────────────────────
