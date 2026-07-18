@@ -24,6 +24,11 @@ router = APIRouter()
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
+# orderID plan-type codes — the IPN handler decodes these, so every
+# MembershipPlan type must have an entry here
+PLAN_TYPE_CODES = {"full_time": "ft", "day_time": "dt", "group_classes": "gc"}
+PLAN_TYPE_FROM_CODE = {code: plan_type for plan_type, code in PLAN_TYPE_CODES.items()}
+
 
 # ── Request schema ────────────────────────────────────────────────────────────
 class CheckoutRequest(BaseModel):
@@ -104,7 +109,7 @@ async def create_checkout_session(
 
     # Encode user_id, plan, and start_date into orderID so the IPN handler can recover them
     start_date_str = body.start_date.strftime("%Y%m%d")
-    plan_type_code = "ft" if body.plan_type == "full_time" else "dt"
+    plan_type_code = PLAN_TYPE_CODES[body.plan_type]
     order_id = f"GYM-{current_user.id}-{body.plan}-{plan_type_code}-{start_date_str}-{int(time.time())}"
 
     first_name = current_user.first_name
@@ -268,7 +273,10 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     except (ValueError, IndexError):
         return JSONResponse({"errorCode": 0})
 
-    plan_type = "full_time" if plan_type_code == "ft" else "day_time"
+    plan_type = PLAN_TYPE_FROM_CODE.get(plan_type_code)
+    if not plan_type:
+        print(f"⚠️ Unknown plan type code '{plan_type_code}' in orderID: {order_id}")
+        return JSONResponse({"errorCode": 0})
     plan_result = await db.execute(select(MembershipPlan).where(MembershipPlan.key == plan_key, MembershipPlan.type == plan_type))
     plan = plan_result.scalar_one_or_none()
     if not plan:
