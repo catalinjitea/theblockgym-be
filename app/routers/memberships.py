@@ -4,20 +4,46 @@ from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import require_user
 from app.core.membership import get_plan_freeze_days_map, resolve_freeze_days
+from app.models.booking import Booking
 from app.models.membership import Membership
+from app.models.membership_plan import MembershipPlan
+from app.models.session import Session
 from app.models.qr_card import QRCard
 from app.models.user import User
 from app.routers.qr_cards import generate_qr_image
 from app.schemas.membership import MembershipResponse
 
 router = APIRouter()
+
+
+async def _plans_by_key(db: AsyncSession, keys: set[str]) -> dict[str, list[MembershipPlan]]:
+    if not keys:
+        return {}
+    result = await db.execute(select(MembershipPlan).where(MembershipPlan.key.in_(keys)))
+    by_key: dict[str, list[MembershipPlan]] = {}
+    for plan in result.scalars().all():
+        by_key.setdefault(plan.key, []).append(plan)
+    return by_key
+
+
+def _pick_plan(plans: list[MembershipPlan] | None, amount: int) -> MembershipPlan | None:
+    """Plan row for a membership. Keys are not unique across plan types,
+    so prefer the row matching what the member actually paid."""
+    if not plans:
+        return None
+    return next((p for p in plans if p.amount == amount), plans[0])
+
+
+async def _resolve_plan(db: AsyncSession, plan_key: str, amount: int) -> MembershipPlan | None:
+    return _pick_plan((await _plans_by_key(db, {plan_key})).get(plan_key), amount)
+
 
 # ── GET /memberships/me ───────────────────────────────────────────────────────
 @router.get("/me", response_model=MembershipResponse | None)
@@ -35,6 +61,26 @@ async def get_my_membership(
         return None
     response = MembershipResponse.model_validate(membership)
     response.max_freeze_days = await resolve_freeze_days(db, membership)
+
+    plan = await _resolve_plan(db, membership.plan, membership.amount)
+    response.plan_name = plan.name if plan else None
+
+    # Group-class plans: derive remaining sessions from confirmed bookings
+    # for classes taking place within the membership period
+    if plan and plan.type == "group_classes" and plan.sessions_count is not None:
+        used = await db.scalar(
+            select(func.count(Booking.id))
+            .join(Session, Booking.session_id == Session.id)
+            .where(
+                Booking.user_id == current_user.id,
+                Booking.status == "confirmed",
+                Session.start_datetime >= membership.start_date,
+                Session.start_datetime <= membership.end_date,
+            )
+        ) or 0
+        response.sessions_total = plan.sessions_count
+        response.sessions_remaining = max(0, plan.sessions_count - used)
+
     return response
 
 
@@ -75,10 +121,13 @@ async def get_my_membership_history(
     )
     memberships = result.scalars().all()
     freeze_days_by_key = await get_plan_freeze_days_map(db)
+    plans_by_key = await _plans_by_key(db, {m.plan for m in memberships})
     responses = []
     for membership in memberships:
         response = MembershipResponse.model_validate(membership)
         response.max_freeze_days = freeze_days_by_key.get(membership.plan)
+        plan = _pick_plan(plans_by_key.get(membership.plan), membership.amount)
+        response.plan_name = plan.name if plan else None
         responses.append(response)
     return responses
 

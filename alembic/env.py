@@ -26,6 +26,8 @@ import app.models.membership       # noqa: E402, F401
 import app.models.membership_plan  # noqa: E402, F401
 import app.models.qr_card          # noqa: E402, F401
 import app.models.scan_entry       # noqa: E402, F401
+import app.models.session          # noqa: E402, F401
+import app.models.booking          # noqa: E402, F401
 
 target_metadata = Base.metadata
 

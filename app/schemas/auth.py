@@ -51,6 +51,7 @@ class UserResponse(BaseModel):
     age: Optional[int]
     is_active: bool
     is_admin: bool
+    is_trainer: bool = False
     terms_accepted_at: Optional[datetime]
     privacy_accepted_at: Optional[datetime]
     created_at: datetime

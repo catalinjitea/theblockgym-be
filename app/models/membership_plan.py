@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
-MembershipPlanType = Enum("full_time", "day_time", name="membershipplan_type")
+MembershipPlanType = Enum("full_time", "day_time", "group_classes", name="membershipplan_type")
 
 
 class MembershipPlan(Base):
@@ -20,4 +20,5 @@ class MembershipPlan(Base):
     duration_days:   Mapped[int]           = mapped_column(Integer, nullable=False)
     duration_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     max_freeze_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sessions_count:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)

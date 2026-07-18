@@ -17,6 +17,7 @@ class User(Base):
     hashed_password:               Mapped[str]                = mapped_column(String(255), nullable=False)
     is_active:                     Mapped[bool]               = mapped_column(Boolean, default=True)
     is_admin:                      Mapped[bool]               = mapped_column(Boolean, default=False)
+    is_trainer:                    Mapped[bool]               = mapped_column(Boolean, default=False)
     terms_accepted_at:             Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     privacy_accepted_at:           Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at:                    Mapped[datetime]           = mapped_column(DateTime, default=datetime.utcnow)
@@ -25,3 +26,4 @@ class User(Base):
     marketing_unsubscribed:        Mapped[bool]               = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     memberships: Mapped[List["Membership"]] = relationship("Membership", back_populates="user", order_by="Membership.created_at.desc()")
+    sessions:    Mapped[List["Session"]]    = relationship("Session", back_populates="trainer")

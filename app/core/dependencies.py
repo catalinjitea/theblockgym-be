@@ -9,6 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+# ── Dependency: optional user (no error if unauthenticated) ──────────────────
+async def get_optional_user(
+    access_token: Optional[str] = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    try:
+        return await get_current_user(access_token, db)
+    except HTTPException:
+        return None
+
 
 # ── Dependency: get current user from cookie ──────────────────────────────────
 async def get_current_user(
@@ -40,5 +50,15 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required."
+        )
+    return current_user
+
+
+# ── Require trainer ───────────────────────────────────────────────────────────
+async def require_trainer(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_trainer and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trainer access required."
         )
     return current_user

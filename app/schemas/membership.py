@@ -5,6 +5,9 @@ from pydantic import BaseModel, computed_field
 class MembershipResponse(BaseModel):
     id: int
     plan: str
+    plan_name: str | None = None
+    sessions_total: int | None = None
+    sessions_remaining: int | None = None
     status: str
     amount: int
     start_date: datetime
