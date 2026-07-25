@@ -17,6 +17,12 @@ class Membership(Base):
     end_date:          Mapped[datetime]      = mapped_column(DateTime, nullable=False)
     freeze_start:      Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     freeze_end:        Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Freeze entitlement snapshotted from the plan at purchase, so repricing or
+    # retiring a plan never changes the terms of a membership already sold.
+    freeze_days_allowance: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    freeze_days_used:      Mapped[int]           = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    freezes_allowance:     Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    freezes_used:          Mapped[int]           = mapped_column(Integer, nullable=False, default=0, server_default="0")
     payment_session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at:        Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow)
 
