@@ -368,14 +368,20 @@ async def search_users(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    words = q.split()
     result = await db.execute(
         select(User)
         .options(selectinload(User.memberships))
         .where(
-            or_(
-                User.first_name.ilike(f"%{q}%"),
-                User.last_name.ilike(f"%{q}%"),
-                User.email.ilike(f"%{q}%"),
+            and_(
+                *[
+                    or_(
+                        User.first_name.ilike(f"%{word}%"),
+                        User.last_name.ilike(f"%{word}%"),
+                        User.email.ilike(f"%{word}%"),
+                    )
+                    for word in words
+                ]
             )
         )
         .order_by(User.last_name, User.first_name)

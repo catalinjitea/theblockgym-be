@@ -6,7 +6,7 @@ from datetime import datetime
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -211,17 +211,37 @@ async def list_scan_entries(
     response: Response,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    q: str | None = Query(None, min_length=1),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    total = (await db.execute(select(func.count()).select_from(ScanEntry))).scalar_one()
-    response.headers["X-Total-Count"] = str(total)
-
-    rows = (await db.execute(
+    base_query = (
         select(ScanEntry, User.first_name, User.last_name, Membership.plan)
         .outerjoin(QRCard, ScanEntry.qr_card_id == QRCard.id)
         .outerjoin(Membership, QRCard.membership_id == Membership.id)
         .outerjoin(User, Membership.user_id == User.id)
+    )
+
+    if q:
+        words = q.split()
+        word_filter = and_(
+            *[
+                or_(
+                    User.first_name.ilike(f"%{word}%"),
+                    User.last_name.ilike(f"%{word}%"),
+                )
+                for word in words
+            ]
+        )
+        base_query = base_query.where(word_filter)
+
+    total = (await db.execute(
+        select(func.count()).select_from(base_query.subquery())
+    )).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
+
+    rows = (await db.execute(
+        base_query
         .order_by(ScanEntry.scanned_at.desc())
         .offset(skip)
         .limit(limit)
