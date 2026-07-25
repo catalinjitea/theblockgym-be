@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager
 
 from app.core.database import get_db
-from app.core.membership import compute_end_date
+from app.core.membership import compute_end_date, snapshot_freeze_allowance
 from app.core.dependencies import require_user
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
@@ -319,6 +319,7 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         start_date=start,
         end_date=end,
         payment_session_id=order_id,
+        **snapshot_freeze_allowance(plan),
     )
     db.add(membership)
     await db.flush()  # populate membership.id

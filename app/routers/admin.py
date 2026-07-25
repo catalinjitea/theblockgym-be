@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.membership import compute_end_date, get_plan_freeze_days_map, resolve_freeze_days
+from app.core.membership import (
+    apply_freeze,
+    available_freeze_days,
+    cancel_freeze,
+    compute_end_date,
+    load_membership_for_update,
+    snapshot_freeze_allowance,
+)
 from app.core.dependencies import require_admin
 from app.core.security import create_unsubscribe_token, hash_password
 from app.models.membership import Membership
@@ -333,8 +340,7 @@ async def list_users(
     )
     response.headers["X-Total-Count"] = str(total)
     users = result.scalars().all()
-    freeze_days_by_key = await get_plan_freeze_days_map(db)
-    return [UserResponse.from_orm_with_membership(u, freeze_days_by_key) for u in users]
+    return [UserResponse.from_orm_with_membership(u) for u in users]
 
 
 # ── GET /admin/plans ──────────────────────────────────────────────────────────
@@ -387,8 +393,7 @@ async def search_users(
         .order_by(User.last_name, User.first_name)
     )
     users = result.scalars().all()
-    freeze_days_by_key = await get_plan_freeze_days_map(db)
-    return [UserResponse.from_orm_with_membership(u, freeze_days_by_key) for u in users]
+    return [UserResponse.from_orm_with_membership(u) for u in users]
 
 
 # ── POST /admin/users ─────────────────────────────────────────────────────────
@@ -476,6 +481,7 @@ async def assign_membership(
         amount=plan.amount,
         start_date=start,
         end_date=end,
+        **snapshot_freeze_allowance(plan),
     )
     db.add(membership)
     await db.flush()
@@ -616,45 +622,14 @@ async def freeze_membership(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Membership).where(Membership.id == membership_id))
-    membership = result.scalar_one_or_none()
+    membership = await load_membership_for_update(db, membership_id)
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
 
-    now = datetime.utcnow()
-
-    if membership.start_date > now or membership.end_date < now:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul nu este activ.")
-
-    if (membership.freeze_start is not None
-            and membership.freeze_end is not None
-            and membership.freeze_end > now):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul este deja înghețat.")
-
-    if body.freeze_start < date.today():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data de început nu poate fi în trecut.")
-
-    if body.freeze_end <= body.freeze_start:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data de sfârșit trebuie să fie după data de început.")
-
-    freeze_days = (body.freeze_end - body.freeze_start).days
-
-    max_freeze_days = await resolve_freeze_days(db, membership)
-    if not max_freeze_days:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Planul nu permite înghețarea abonamentului.")
-
-    if freeze_days > max_freeze_days:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Perioada de îngheț nu poate depăși {max_freeze_days} zile.",
-        )
-
-    membership.freeze_start = datetime.combine(body.freeze_start, time.min)
-    membership.freeze_end = datetime.combine(body.freeze_end, time(23, 59, 59))
-    membership.end_date += timedelta(days=freeze_days)
+    apply_freeze(membership, body.freeze_start, body.freeze_end)
 
     response = MembershipResponse.model_validate(membership)
-    response.max_freeze_days = max_freeze_days
+    response.max_freeze_days = available_freeze_days(membership)
     return response
 
 
@@ -665,25 +640,15 @@ async def unfreeze_membership(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Membership).where(Membership.id == membership_id))
-    membership = result.scalar_one_or_none()
+    membership = await load_membership_for_update(db, membership_id)
     if not membership:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found.")
 
-    now = datetime.utcnow()
+    cancel_freeze(membership)
 
-    if (membership.freeze_start is None
-            or membership.freeze_end is None
-            or membership.freeze_end <= now):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Abonamentul nu este înghețat.")
-
-    # For an active freeze: give back days remaining from now.
-    # For a scheduled (future) freeze: give back the full freeze duration.
-    effective_start = max(now, membership.freeze_start)
-    membership.end_date -= membership.freeze_end - effective_start
-    membership.freeze_end = now
-
-    return membership
+    response = MembershipResponse.model_validate(membership)
+    response.max_freeze_days = available_freeze_days(membership)
+    return response
 
 
 # ── PATCH /admin/users/{id}/password ─────────────────────────────────────────

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.membership import compute_end_date
+from app.core.membership import compute_end_date, snapshot_freeze_allowance
 from app.core.dependencies import require_admin
 from app.core.websocket import manager
 from app.models.membership import Membership
@@ -310,6 +310,7 @@ async def activate_qr_card(
         amount=plan.amount,
         start_date=start,
         end_date=end,
+        **snapshot_freeze_allowance(plan),
     )
     db.add(membership)
     await db.flush()
@@ -376,6 +377,7 @@ async def renew_qr_card(
         amount=plan.amount,
         start_date=start,
         end_date=end,
+        **snapshot_freeze_allowance(plan),
     )
     db.add(membership)
     await db.flush()

@@ -31,6 +31,8 @@ class LatestMembershipInfo(BaseModel):
     status: str
     freeze_start: Optional[datetime] = None
     freeze_end: Optional[datetime] = None
+    # Days still freezable, not the plan's original cap. Zero once either the
+    # day allowance or the number of permitted freezes is spent.
     max_freeze_days: Optional[int] = None
 
     @computed_field
@@ -58,13 +60,14 @@ class UserResponse(BaseModel):
     latest_membership: Optional[LatestMembershipInfo] = None
 
     @classmethod
-    def from_orm_with_membership(cls, user, freeze_days_by_key: Optional[dict[str, int]] = None):
+    def from_orm_with_membership(cls, user):
+        from app.core.membership import available_freeze_days
+
         obj = cls.model_validate(user)
         if user.memberships:
             latest = user.memberships[0]
             obj.latest_membership = LatestMembershipInfo.model_validate(latest)
-            if freeze_days_by_key is not None:
-                obj.latest_membership.max_freeze_days = freeze_days_by_key.get(latest.plan)
+            obj.latest_membership.max_freeze_days = available_freeze_days(latest)
         return obj
 
     model_config = {"from_attributes": True}
