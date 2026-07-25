@@ -34,6 +34,19 @@ class LatestMembershipInfo(BaseModel):
     # Days still freezable, not the plan's original cap. Zero once either the
     # day allowance or the number of permitted freezes is spent.
     max_freeze_days: Optional[int] = None
+    # The plan's original entitlement and what has been spent, for "x of y"
+    # display. Note freeze_days_used already includes an in-progress freeze.
+    freeze_days_allowance: Optional[int] = None
+    freeze_days_used: int = 0
+    freezes_allowance: Optional[int] = None
+    freezes_used: int = 0
+
+    @computed_field
+    @property
+    def freezes_remaining(self) -> Optional[int]:
+        if self.freezes_allowance is None:
+            return None
+        return max(0, self.freezes_allowance - self.freezes_used)
 
     @computed_field
     @property

@@ -67,15 +67,13 @@ def freezes_remaining(membership: Membership) -> Optional[int]:
 
 
 def freeze_day_count(freeze_start: date, freeze_end: date) -> int:
-    """Days a freeze is charged for.
+    """Days a freeze is charged for, counted inclusively.
 
-    Exclusive: Jan 1 -> Jan 2 costs 1. This under-counts by a day, since
-    freeze_end is stored at 23:59:59 and access is actually blocked for both
-    days, but it matches what end_date is extended by and what the frontend
-    displays. Correcting it means changing both sides at once — deliberately
-    left alone here so this change stays backend-only.
+    freeze_end is stored at 23:59:59, so a Jan 1 -> Jan 2 freeze blocks access
+    for both days and costs 2. A single-day freeze (start == end) costs 1,
+    which is what makes a leftover 1-day balance spendable.
     """
-    return (freeze_end - freeze_start).days
+    return (freeze_end - freeze_start).days + 1
 
 
 # ── Locking loaders ───────────────────────────────────────────────────────────
@@ -129,13 +127,15 @@ def apply_freeze(membership: Membership, freeze_start: date, freeze_end: date) -
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Planul nu permite înghețarea abonamentului.")
 
-    if freeze_start < date.today():
+    # now.date(), not date.today(): the rest of this module works in UTC, and
+    # a server on local time would disagree with it either side of midnight.
+    if freeze_start < now.date():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Data de început nu poate fi în trecut.")
 
-    if freeze_end <= freeze_start:
+    if freeze_end < freeze_start:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Data de sfârșit trebuie să fie după data de început.")
+                            detail="Data de sfârșit nu poate fi înainte de data de început.")
 
     # A freeze scheduled past the membership's own expiry would extend end_date
     # for a pause the member can never actually take.
@@ -148,6 +148,10 @@ def apply_freeze(membership: Membership, freeze_start: date, freeze_end: date) -
                             detail="Ai folosit toate înghețările disponibile pentru acest abonament.")
 
     remaining_days = max(0, membership.freeze_days_allowance - membership.freeze_days_used)
+    if remaining_days == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Ai folosit toate zilele de îngheț disponibile pentru acest abonament.")
+
     days = freeze_day_count(freeze_start, freeze_end)
     if days > remaining_days:
         raise HTTPException(
@@ -166,10 +170,16 @@ def apply_freeze(membership: Membership, freeze_start: date, freeze_end: date) -
 def cancel_freeze(membership: Membership) -> int:
     """Cancel the active or scheduled freeze, returning the days refunded.
 
-    A freeze that never started is undone completely, including the freeze
-    itself. One already under way refunds only its unspent days and still
-    counts against the freeze allowance — otherwise freeze/unfreeze could be
-    cycled indefinitely at no cost.
+    A freeze is only "taken" once a whole day of it has elapsed. Cancelling
+    before the start date, or on the start date itself, undoes it completely —
+    days and the freeze both come back, and the member can change their mind
+    without penalty.
+
+    Cancelling later refunds the unspent days but keeps the freeze counted.
+    That asymmetry is what stops the cycle the caps exist to prevent: letting a
+    freeze run most of its length, cancelling, and re-freezing for a fresh
+    allowance. A same-day cancel can't be abused the same way, because it hands
+    back the whole end_date extension it granted.
     """
     now = datetime.utcnow()
 
@@ -180,24 +190,30 @@ def cancel_freeze(membership: Membership) -> int:
                             detail="Abonamentul nu este înghețat.")
 
     charged = freeze_day_count(membership.freeze_start.date(), membership.freeze_end.date())
-    started = membership.freeze_start <= now
+    elapsed_days = (now.date() - membership.freeze_start.date()).days
+    undo = elapsed_days <= 0
 
-    if started:
-        spent = (now.date() - membership.freeze_start.date()).days
-        spent = min(max(spent, 0), charged)
-    else:
+    if undo:
         spent = 0
+    else:
+        # The day it is cancelled on counts as spent — the member was frozen
+        # for part of it.
+        spent = min(freeze_day_count(membership.freeze_start.date(), now.date()), charged)
 
-    refund = charged - spent
+    # Never refund more than was actually charged. Guards freezes booked before
+    # the inclusive-counting change, whose stored window is a day longer than
+    # what came off the allowance.
+    refund = min(charged - spent, membership.freeze_days_used)
     membership.end_date -= timedelta(days=refund)
     membership.freeze_days_used = max(0, membership.freeze_days_used - refund)
 
-    if started:
-        membership.freeze_end = now
-    else:
-        # Never happened: leave no trace of a scheduled freeze.
+    if undo:
+        # Never really happened: give the freeze back and leave no trace.
         membership.freezes_used = max(0, membership.freezes_used - 1)
         membership.freeze_start = None
         membership.freeze_end = None
+    else:
+        # Close the window now; the days already spent stay charged.
+        membership.freeze_end = now
 
     return refund
