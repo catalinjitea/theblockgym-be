@@ -21,5 +21,5 @@ class MembershipPlan(Base):
     duration_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     max_freeze_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     max_freezes:     Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    # sessions_count:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sessions_count:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)
