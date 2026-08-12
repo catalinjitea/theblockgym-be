@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,12 +14,11 @@ from app.core.membership import (
     apply_freeze,
     available_freeze_days,
     cancel_freeze,
+    count_sessions_used,
     load_active_membership_for_update,
 )
-from app.models.booking import Booking
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
-from app.models.session import Session
 from app.models.qr_card import QRCard
 from app.models.user import User
 from app.routers.qr_cards import generate_qr_image
@@ -71,18 +70,10 @@ async def get_my_membership(
     response.plan_name = plan.name if plan else None
 
     # Group-class plans: derive remaining sessions from confirmed bookings
-    # for classes taking place within the membership period
+    # for classes taking place within the membership period (query lives in
+    # count_sessions_used, shared with the booking gate in routers/sessions.py)
     if plan and plan.type == "group_classes" and plan.sessions_count is not None:
-        used = await db.scalar(
-            select(func.count(Booking.id))
-            .join(Session, Booking.session_id == Session.id)
-            .where(
-                Booking.user_id == current_user.id,
-                Booking.status == "confirmed",
-                Session.start_datetime >= membership.start_date,
-                Session.start_datetime <= membership.end_date,
-            )
-        ) or 0
+        used = await count_sessions_used(db, current_user.id, membership)
         response.sessions_total = plan.sessions_count
         response.sessions_remaining = max(0, plan.sessions_count - used)
 

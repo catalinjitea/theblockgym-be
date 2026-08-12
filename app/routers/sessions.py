@@ -8,6 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import get_optional_user, require_trainer, require_user
+from app.core.membership import count_sessions_used
+from app.core.promo import is_free_class_session  # FREE-WEEK-PROMO
 from app.core.timeutils import ro_now
 from app.models.booking import Booking
 from app.models.membership import Membership
@@ -25,6 +27,8 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
     Returns None when some active group_classes membership covers the
     session's date and still has sessions left in its quota
     (plan.sessions_count, counted per membership period; None = unlimited).
+    During the free-classes week (app/core/promo.py) any active membership
+    covering the session's date is enough — no group plan, no quota.
     Otherwise returns a {code, message} dict describing why not.
     """
     now = ro_now()
@@ -36,6 +40,18 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
         )
     )
     memberships = memberships_result.scalars().all()
+
+    # ── FREE-WEEK-PROMO — delete this block after 2026-08-16 ──────────────────
+    # Self-deactivating: once the week passes, no bookable session can start
+    # inside the window, so the normal gate below takes over automatically.
+    if is_free_class_session(session.start_datetime):
+        if not memberships:
+            return {"code": "no_group_access", "message": "Ai nevoie de un abonament activ pentru a rezerva."}
+        for membership in memberships:
+            if membership.start_date <= session.start_datetime <= membership.end_date:
+                return None
+        return {"code": "not_covered", "message": "Abonamentul tău nu acoperă data acestei sesiuni."}
+    # ── FREE-WEEK-PROMO END ────────────────────────────────────────────────────
 
     group_plans: dict[str, MembershipPlan] = {}
     if memberships:
@@ -62,16 +78,7 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
         if plan.sessions_count is None:
             return None
 
-        used = await db.scalar(
-            select(func.count(Booking.id))
-            .join(Session, Booking.session_id == Session.id)
-            .where(
-                Booking.user_id == user.id,
-                Booking.status == "confirmed",
-                Session.start_datetime >= membership.start_date,
-                Session.start_datetime <= membership.end_date,
-            )
-        ) or 0
+        used = await count_sessions_used(db, user.id, membership)
         if used < plan.sessions_count:
             return None
 
