@@ -3,9 +3,8 @@ from typing import Optional
 
 # ── FREE-WEEK-PROMO ───────────────────────────────────────────────────────────
 # Free-classes week (Mon 2026-08-10 through Sat 2026-08-16): sessions starting
-# inside this window are bookable by anyone whose active membership covers the
-# session date — no group_classes plan required — and never consume a
-# group-plan session quota.
+# inside this window are bookable by every registered user — no membership
+# required — and never consume a group-plan session quota.
 #
 # Everything is keyed on the *session's* date, so the promo switches itself off
 # once the week has passed; nothing needs restoring. Cleanup afterwards is

@@ -27,10 +27,18 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
     Returns None when some active group_classes membership covers the
     session's date and still has sessions left in its quota
     (plan.sessions_count, counted per membership period; None = unlimited).
-    During the free-classes week (app/core/promo.py) any active membership
-    covering the session's date is enough — no group plan, no quota.
+    During the free-classes week (app/core/promo.py) every registered user
+    may book — no membership, no quota.
     Otherwise returns a {code, message} dict describing why not.
     """
+    # ── FREE-WEEK-PROMO — delete this block after 2026-08-16 ──────────────────
+    # Launch week is free for every registered user, membership or not.
+    # Self-deactivating: once the week passes, no bookable session can start
+    # inside the window, so the normal gate below takes over automatically.
+    if is_free_class_session(session.start_datetime):
+        return None
+    # ── FREE-WEEK-PROMO END ────────────────────────────────────────────────────
+
     now = ro_now()
     memberships_result = await db.execute(
         select(Membership).where(
@@ -40,18 +48,6 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
         )
     )
     memberships = memberships_result.scalars().all()
-
-    # ── FREE-WEEK-PROMO — delete this block after 2026-08-16 ──────────────────
-    # Self-deactivating: once the week passes, no bookable session can start
-    # inside the window, so the normal gate below takes over automatically.
-    if is_free_class_session(session.start_datetime):
-        if not memberships:
-            return {"code": "no_group_access", "message": "Ai nevoie de un abonament activ pentru a rezerva."}
-        for membership in memberships:
-            if membership.start_date <= session.start_datetime <= membership.end_date:
-                return None
-        return {"code": "not_covered", "message": "Abonamentul tău nu acoperă data acestei sesiuni."}
-    # ── FREE-WEEK-PROMO END ────────────────────────────────────────────────────
 
     group_plans: dict[str, MembershipPlan] = {}
     if memberships:
