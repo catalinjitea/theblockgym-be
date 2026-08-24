@@ -31,7 +31,7 @@ async def _group_classes_booking_error(user: User, session: Session, db: AsyncSe
     may book — no membership, no quota.
     Otherwise returns a {code, message} dict describing why not.
     """
-    # ── FREE-WEEK-PROMO — delete this block after 2026-08-23 ──────────────────
+    # ── FREE-WEEK-PROMO — delete this block after 2026-08-30 ──────────────────
     # Launch week is free for every registered user, membership or not.
     # Self-deactivating: once the week passes, no bookable session can start
     # inside the window, so the normal gate below takes over automatically.
