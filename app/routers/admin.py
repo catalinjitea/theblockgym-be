@@ -155,32 +155,31 @@ async def get_period_stats(
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.utcnow()
-    period_end = datetime.combine(to_date, datetime.max.time().replace(microsecond=0)) if to_date else now
-
-    if from_date:
-        period_start = datetime.combine(from_date, datetime.min.time())
-    else:
-        today = now.date()
-        prev18 = date(today.year - 1 if today.month == 1 else today.year, 12 if today.month == 1 else today.month - 1, 18)
-        period_start = datetime.combine(prev18, datetime.min.time())
+    # Defaults cover the whole current calendar month.
+    period_from = from_date or now.date().replace(day=1)
+    period_to = to_date or period_from.replace(
+        day=calendar.monthrange(period_from.year, period_from.month)[1]
+    )
+    period_start = datetime.combine(period_from, datetime.min.time())
+    period_end = datetime.combine(period_to, datetime.max.time().replace(microsecond=0))
 
     # Renewal rate: compare equivalent days into each cycle.
-    # e.g. if from_date=May 18 and today=May 26, compare Apr 18–Apr 26 expirations
-    # against renewals that started May 18–May 26.
+    # e.g. if period_from=May 1 and today=May 9, compare Apr 1–Apr 9 expirations
+    # against renewals that started May 1–May 9.
     effective_end = min(now, period_end)
-    days_into = max((effective_end.date() - from_date).days, 0) if from_date else 0
+    days_into = max((effective_end.date() - period_from).days, 0)
     tomorrow_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    if from_date:
-        prev_m = from_date.month - 1 if from_date.month > 1 else 12
-        prev_y = from_date.year if from_date.month > 1 else from_date.year - 1
-        prev_day = min(from_date.day, calendar.monthrange(prev_y, prev_m)[1])
-        prev_cycle_start = datetime.combine(date(prev_y, prev_m, prev_day), datetime.min.time())
-        prev_cycle_end = prev_cycle_start + timedelta(days=days_into)
-        prev_cycle_end = prev_cycle_end.replace(hour=23, minute=59, second=59)
-    else:
-        prev_cycle_start = period_start
-        prev_cycle_end = effective_end
+    prev_m = period_from.month - 1 if period_from.month > 1 else 12
+    prev_y = period_from.year if period_from.month > 1 else period_from.year - 1
+    prev_day = min(period_from.day, calendar.monthrange(prev_y, prev_m)[1])
+    prev_cycle_start = datetime.combine(date(prev_y, prev_m, prev_day), datetime.min.time())
+    # Never let the comparison window spill into the current period (e.g. a 31-day
+    # month measured against a 28-day February).
+    prev_cycle_end = min(
+        prev_cycle_start + timedelta(days=days_into),
+        datetime.combine(period_from - timedelta(days=1), datetime.min.time()),
+    ).replace(hour=23, minute=59, second=59)
 
     # Users who started a membership in the previous equivalent window and it expires today or earlier
     prev_cohort_subq = (
