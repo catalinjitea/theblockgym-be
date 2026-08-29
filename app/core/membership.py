@@ -24,8 +24,15 @@ def compute_end_date(start: datetime, plan: MembershipPlan) -> datetime:
         month = start.month - 1 + plan.duration_months
         year = start.year + month // 12
         month = month % 12 + 1
-        day = min(start.day, monthrange(year, month)[1])
-        end = start.replace(year=year, month=month, day=day)
+        last_day = monthrange(year, month)[1]
+        if start.day > last_day:
+            # The target month has no day with this number, so the clamped
+            # date is already the last one the member is owed. Returning it at
+            # end of day instead of falling through to the -1s below is what
+            # keeps an Aug 31 start from ending on Sep 29 rather than Sep 30.
+            return start.replace(year=year, month=month, day=last_day,
+                                 hour=23, minute=59, second=59)
+        end = start.replace(year=year, month=month, day=start.day)
     else:
         end = start + timedelta(days=plan.duration_days)
     return end - timedelta(seconds=1)
