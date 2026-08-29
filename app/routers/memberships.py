@@ -14,7 +14,6 @@ from app.core.membership import (
     apply_freeze,
     available_freeze_days,
     cancel_freeze,
-    count_sessions_used,
     load_active_membership_for_update,
 )
 from app.models.membership import Membership
@@ -68,14 +67,6 @@ async def get_my_membership(
 
     plan = await _resolve_plan(db, membership.plan, membership.amount)
     response.plan_name = plan.name if plan else None
-
-    # Group-class plans: derive remaining sessions from confirmed bookings
-    # for classes taking place within the membership period (query lives in
-    # count_sessions_used, shared with the booking gate in routers/sessions.py)
-    if plan and plan.type == "group_classes" and plan.sessions_count is not None:
-        used = await count_sessions_used(db, current_user.id, membership)
-        response.sessions_total = plan.sessions_count
-        response.sessions_remaining = max(0, plan.sessions_count - used)
 
     return response
 

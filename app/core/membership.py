@@ -3,14 +3,11 @@ from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.promo import FREE_CLASSES_FROM, FREE_CLASSES_UNTIL
-from app.models.booking import Booking
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
-from app.models.session import Session
 
 
 def compute_end_date(start: datetime, plan: MembershipPlan) -> datetime:
@@ -38,39 +35,6 @@ def compute_end_date(start: datetime, plan: MembershipPlan) -> datetime:
     return end - timedelta(seconds=1)
 
 
-# ── Session quota ─────────────────────────────────────────────────────────────
-
-async def count_sessions_used(db: AsyncSession, user_id: int, membership: Membership) -> int:
-    """Confirmed bookings that consume this membership's session quota.
-
-    Counts bookings for sessions taking place within the membership period.
-    Sessions inside the free-classes window (app/core/promo.py) never count:
-    that week is free for everyone, including members who paid for a session
-    pack — and must stay uncounted after the promo ends.
-    """
-    query = (
-        select(func.count(Booking.id))
-        .join(Session, Booking.session_id == Session.id)
-        .where(
-            Booking.user_id == user_id,
-            Booking.status == "confirmed",
-            Session.start_datetime >= membership.start_date,
-            Session.start_datetime <= membership.end_date,
-        )
-    )
-    # FREE-WEEK-PROMO — but do NOT remove right after the week: dropping this
-    # filter while a session pack sold before/during the promo is still active
-    # would retroactively charge its free-week bookings against the quota.
-    # Safe to delete (with app/core/promo.py) only once no active
-    # group-classes membership's start/end window overlaps the promo week.
-    if FREE_CLASSES_FROM is not None and FREE_CLASSES_UNTIL is not None:
-        query = query.where(or_(
-            Session.start_datetime < FREE_CLASSES_FROM,
-            Session.start_datetime >= FREE_CLASSES_UNTIL,
-        ))
-    return await db.scalar(query) or 0
-
-
 # ── Freeze entitlement ────────────────────────────────────────────────────────
 
 def snapshot_freeze_allowance(plan: MembershipPlan) -> dict[str, Optional[int]]:
@@ -86,6 +50,17 @@ def snapshot_freeze_allowance(plan: MembershipPlan) -> dict[str, Optional[int]]:
         "freeze_days_allowance": plan.max_freeze_days,
         "freezes_allowance": plan.max_freezes,
     }
+
+
+def is_frozen_at(membership: Membership, moment: datetime) -> bool:
+    """True when the membership is paused over `moment`.
+
+    A freeze suspends everything the membership entitles: gym entry while it
+    runs, and any class taking place inside the window.
+    """
+    return (membership.freeze_start is not None
+            and membership.freeze_end is not None
+            and membership.freeze_start <= moment <= membership.freeze_end)
 
 
 def available_freeze_days(membership: Membership) -> Optional[int]:

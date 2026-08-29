@@ -8,12 +8,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import get_optional_user, require_trainer, require_user
-from app.core.membership import count_sessions_used
-from app.core.promo import is_free_class_session  # FREE-WEEK-PROMO
+from app.core.membership import is_frozen_at
 from app.core.timeutils import ro_now
 from app.models.booking import Booking
 from app.models.membership import Membership
-from app.models.membership_plan import MembershipPlan
 from app.models.session import Session
 from app.models.user import User
 from app.schemas.sessions import BookedUserResponse, BookingResponse, MySessionResponse, SessionResponse, TrainerSessionResponse
@@ -21,68 +19,37 @@ from app.schemas.sessions import BookedUserResponse, BookingResponse, MySessionR
 router = APIRouter()
 
 
-async def _group_classes_booking_error(user: User, session: Session, db: AsyncSession) -> dict | None:
+async def _booking_access_error(user: User, session: Session, db: AsyncSession) -> dict | None:
     """Check whether the user may book this session.
 
-    Returns None when some active group_classes membership covers the
-    session's date and still has sessions left in its quota
-    (plan.sessions_count, counted per membership period; None = unlimited).
-    During the free-classes week (app/core/promo.py) every registered user
-    may book — no membership, no quota.
-    Otherwise returns a {code, message} dict describing why not.
+    Classes are included with every membership: any active membership whose
+    period covers the session's date grants access, whatever the plan type,
+    with no per-plan session quota. Returns None when allowed, otherwise a
+    {code, message} dict describing why not.
     """
-    # ── FREE-WEEK-PROMO — delete this block after 2026-08-30 ──────────────────
-    # Launch week is free for every registered user, membership or not.
-    # Self-deactivating: once the week passes, no bookable session can start
-    # inside the window, so the normal gate below takes over automatically.
-    if is_free_class_session(session.start_datetime):
-        return None
-    # ── FREE-WEEK-PROMO END ────────────────────────────────────────────────────
-
     now = ro_now()
-    memberships_result = await db.execute(
+    result = await db.execute(
         select(Membership).where(
             Membership.user_id == user.id,
             Membership.status == "activ",
             Membership.end_date > now,
         )
     )
-    memberships = memberships_result.scalars().all()
+    memberships = result.scalars().all()
+    if not memberships:
+        return {"code": "no_membership", "message": "Ai nevoie de un abonament activ pentru a rezerva o clasă."}
 
-    group_plans: dict[str, MembershipPlan] = {}
-    if memberships:
-        plan_rows = await db.execute(
-            select(MembershipPlan).where(
-                MembershipPlan.key.in_({m.plan for m in memberships}),
-                MembershipPlan.type == "group_classes",
-            )
-        )
-        group_plans = {p.key: p for p in plan_rows.scalars().all()}
+    covering = [m for m in memberships if m.start_date <= session.start_datetime <= m.end_date]
+    if not covering:
+        return {"code": "not_covered", "message": "Abonamentul tău nu acoperă data acestei clase."}
 
-    has_plan = False
-    covers_session = False
-    for membership in memberships:
-        plan = group_plans.get(membership.plan)
-        if not plan:
-            continue
-        has_plan = True
+    # A freeze pauses the membership, so it doesn't cover classes taking place
+    # inside the frozen window. Classes after the freeze ends stay bookable —
+    # end_date was extended by the same number of days.
+    if all(is_frozen_at(m, session.start_datetime) for m in covering):
+        return {"code": "frozen", "message": "Abonamentul tău este înghețat în perioada acestei clase."}
 
-        if not (membership.start_date <= session.start_datetime <= membership.end_date):
-            continue
-        covers_session = True
-
-        if plan.sessions_count is None:
-            return None
-
-        used = await count_sessions_used(db, user.id, membership)
-        if used < plan.sessions_count:
-            return None
-
-    if not has_plan:
-        return {"code": "no_group_access", "message": "Abonamentul tău nu include acces la clase de grup."}
-    if not covers_session:
-        return {"code": "not_covered", "message": "Abonamentul tău nu acoperă data acestei sesiuni."}
-    return {"code": "quota_exhausted", "message": "Ți-ai folosit toate ședințele incluse în abonament."}
+    return None
 
 
 # ── GET /sessions ─────────────────────────────────────────────────────────────
@@ -223,7 +190,7 @@ async def book_session(
     if not session or session.start_datetime <= ro_now():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sesiunea nu există sau a început deja.")
 
-    access_error = await _group_classes_booking_error(current_user, session, db)
+    access_error = await _booking_access_error(current_user, session, db)
     if access_error:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=access_error)
 
