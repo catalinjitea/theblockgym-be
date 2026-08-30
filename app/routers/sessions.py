@@ -18,6 +18,10 @@ from app.schemas.sessions import BookedUserResponse, BookingResponse, MySessionR
 
 router = APIRouter()
 
+# Bookings close this long before a class starts, so trainers know their
+# numbers the evening before and late no-shows can't hold a spot.
+BOOKING_CUTOFF = timedelta(hours=12)
+
 
 async def _booking_access_error(user: User, session: Session, db: AsyncSession) -> dict | None:
     """Check whether the user may book this session.
@@ -189,6 +193,16 @@ async def book_session(
     session = await db.get(Session, session_id, with_for_update=True)
     if not session or session.start_datetime <= ro_now():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sesiunea nu există sau a început deja.")
+
+    if session.start_datetime - ro_now() < BOOKING_CUTOFF:
+        hours = int(BOOKING_CUTOFF.total_seconds() // 3600)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "booking_closed",
+                "message": f"Rezervările se închid cu {hours} ore înainte de începerea clasei.",
+            },
+        )
 
     access_error = await _booking_access_error(current_user, session, db)
     if access_error:
