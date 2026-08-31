@@ -58,6 +58,18 @@ QR cards are created/reused in three places: IPN handler (`payments.py`), `assig
 
 Overlap checks are enforced before creating any membership. The query pattern is: `start_date < new_end AND end_date > new_start`.
 
+## Domain: Promo Codes
+
+Percentage-off codes for online checkout only — admins cannot attach a discount to a manually assigned membership.
+
+`PromoCode.audience` states reach explicitly: `"named"` (only members listed in `promo_code_users`) or `"everyone"`. It is never inferred from whether the allowlist has rows — the admin API rejects a `named` code with an empty list and an `everyone` code carrying one, because those two states used to be indistinguishable and silently advertised a code to every member.
+
+`quote_promo_code` in [app/core/promo.py](app/core/promo.py) is the single source of truth for validation and pricing, shared by `POST /promo/validate` (preview) and checkout (authoritative, `lock=True`). `has_eligible_code` mirrors its rules to decide whether the checkout page renders the discount field at all — members with nothing available never learn codes exist. **The two must stay in agreement**, or the field appears and then refuses to work.
+
+Discounts never touch `Membership`: it keeps storing the plan's list price, so the `(key, amount)` stats join in [app/routers/admin.py](app/routers/admin.py) is unaffected. The discount lives on `PromoRedemption`, keyed by `order_id` — which is also `Membership.payment_session_id`, so the two join. This is what lets the discount reach the IPN handler without the `orderID` string having to carry it; that string is parsed positionally from both ends, so adding a field to it would misparse orders already in flight.
+
+Redemptions are written `pending` at checkout and flipped to `confirmed` by the IPN, so a code only burns when payment lands. A pending row holds its slot for `PENDING_HOLD_MINUTES`, then ages out — but never counts against its own owner, so an abandoned checkout can be retried. Rejections from `quote_promo_code` carry `detail={"code": "promo_rejected", ...}` so checkout can distinguish a refused code from an unrelated failure.
+
 ## Domain: Payments
 
 Netopia integration in [app/routers/payments.py](app/routers/payments.py). The `orderID` encodes `user_id`, `plan`, `plan_type`, and `start_date` so the IPN handler can reconstruct context without a pending-order table. IPN verification checks issuer, audience (POS signature), and SHA-512 payload hash from the JWT `sub` claim. Duplicate IPN calls are guarded by checking `payment_session_id` uniqueness on `Membership`.
