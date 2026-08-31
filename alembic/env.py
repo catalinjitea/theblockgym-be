@@ -24,6 +24,7 @@ from app.core.database import Base  # noqa: E402
 import app.models.user             # noqa: E402, F401
 import app.models.membership       # noqa: E402, F401
 import app.models.membership_plan  # noqa: E402, F401
+import app.models.promo_code       # noqa: E402, F401
 import app.models.qr_card          # noqa: E402, F401
 import app.models.scan_entry       # noqa: E402, F401
 import app.models.session          # noqa: E402, F401

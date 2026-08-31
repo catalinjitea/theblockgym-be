@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from typing import Literal, Optional
 from pydantic import BaseModel
-from sqlalchemy import and_, extract, func, select, or_
+from sqlalchemy import and_, delete as sa_delete, extract, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,10 +19,15 @@ from app.core.membership import (
     load_membership_for_update,
     snapshot_freeze_allowance,
 )
+from app.core.promo import MAX_DISCOUNT_PERCENT, normalize_code
 from app.core.dependencies import require_admin
 from app.core.security import create_unsubscribe_token, hash_password
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
+from app.models.promo_code import (
+    AUDIENCE_EVERYONE, AUDIENCE_NAMED, AUDIENCES,
+    PromoCode, PromoCodeUser, PromoRedemption,
+)
 from app.models.qr_card import QRCard
 from app.models.user import User
 from app.core.email import send_welcome_email
@@ -708,3 +713,335 @@ async def export_marketing_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="marketing_{audience}.csv"'},
     )
+
+
+# ── Promo codes ───────────────────────────────────────────────────────────────
+class PromoCodeUserSummary(BaseModel):
+    user_id: int
+    first_name: str
+    last_name: str
+    email: str
+
+
+class PromoCodeResponse(BaseModel):
+    id: int
+    code: str
+    discount_percent: int
+    audience: str
+    max_uses: Optional[int]
+    max_uses_per_user: int
+    valid_from: Optional[datetime]
+    valid_until: Optional[datetime]
+    plan_key: Optional[str]
+    plan_type: Optional[str]
+    is_active: bool
+    created_at: datetime
+    times_used: int                       # confirmed redemptions only
+    allowed_users: list[PromoCodeUserSummary]
+
+
+class PromoCodeCreateRequest(BaseModel):
+    code: str
+    discount_percent: int
+    audience: str = AUDIENCE_NAMED
+    max_uses: Optional[int] = None
+    max_uses_per_user: int = 1
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    plan_key: Optional[str] = None
+    plan_type: Optional[str] = None
+    allowed_user_ids: list[int] = []
+
+
+class PromoCodeUpdateRequest(BaseModel):
+    discount_percent: Optional[int] = None
+    audience: Optional[str] = None
+    max_uses: Optional[int] = None
+    max_uses_per_user: Optional[int] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
+    plan_key: Optional[str] = None
+    plan_type: Optional[str] = None
+    is_active: Optional[bool] = None
+    allowed_user_ids: Optional[list[int]] = None
+
+
+async def _serialize_promo_code(db: AsyncSession, promo: PromoCode) -> PromoCodeResponse:
+    confirmed = (await db.execute(
+        select(func.count()).select_from(PromoRedemption).where(
+            PromoRedemption.promo_code_id == promo.id,
+            PromoRedemption.status == "confirmed",
+        )
+    )).scalar_one()
+    return PromoCodeResponse(
+        id=promo.id,
+        code=promo.code,
+        discount_percent=promo.discount_percent,
+        audience=promo.audience,
+        max_uses=promo.max_uses,
+        max_uses_per_user=promo.max_uses_per_user,
+        valid_from=promo.valid_from,
+        valid_until=promo.valid_until,
+        plan_key=promo.plan_key,
+        plan_type=promo.plan_type,
+        is_active=promo.is_active,
+        created_at=promo.created_at,
+        times_used=confirmed,
+        allowed_users=[
+            PromoCodeUserSummary(
+                user_id=entry.user.id,
+                first_name=entry.user.first_name,
+                last_name=entry.user.last_name,
+                email=entry.user.email,
+            )
+            for entry in promo.allowed_users
+        ],
+    )
+
+
+def _validate_promo_fields(discount_percent: Optional[int], max_uses: Optional[int],
+                           max_uses_per_user: Optional[int],
+                           valid_from: Optional[datetime], valid_until: Optional[datetime]) -> None:
+    if discount_percent is not None and not (1 <= discount_percent <= MAX_DISCOUNT_PERCENT):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reducerea trebuie să fie între 1 și {MAX_DISCOUNT_PERCENT}%. "
+                   "Pentru abonamente gratuite folosește atribuirea manuală.",
+        )
+    if max_uses is not None and max_uses < 1:
+        raise HTTPException(status_code=400, detail="Numărul maxim de utilizări trebuie să fie cel puțin 1.")
+    if max_uses_per_user is not None and max_uses_per_user < 1:
+        raise HTTPException(status_code=400, detail="Numărul de utilizări per membru trebuie să fie cel puțin 1.")
+    if valid_from and valid_until and valid_until <= valid_from:
+        raise HTTPException(status_code=400, detail="Data de expirare trebuie să fie după data de început.")
+
+
+def _validate_audience(audience: str, allowed_user_ids: Optional[list[int]]) -> None:
+    """Audience and allowlist must agree, or the code silently reaches the wrong
+    people — a "named" code with nobody named reaches no one, and an "everyone"
+    code carrying an allowlist reads as restricted while behaving as public."""
+    if audience not in AUDIENCES:
+        raise HTTPException(status_code=400, detail=f"Audiență invalidă: '{audience}'.")
+    if audience == AUDIENCE_NAMED and not allowed_user_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Un cod pentru membri selectați are nevoie de cel puțin un membru. "
+                   "Pentru un cod public alege „Toți membrii”.",
+        )
+    if audience == AUDIENCE_EVERYONE and allowed_user_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Un cod public nu poate avea listă de membri. "
+                   "Alege „Doar membri selectați” dacă vrei să îl restricționezi.",
+        )
+
+
+async def _load_promo(db: AsyncSession, promo_id: int) -> PromoCode:
+    promo = (await db.execute(
+        select(PromoCode)
+        .where(PromoCode.id == promo_id)
+        .options(selectinload(PromoCode.allowed_users).selectinload(PromoCodeUser.user))
+    )).scalar_one_or_none()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Codul de reducere nu a fost găsit.")
+    return promo
+
+
+@router.get("/promo-codes", response_model=list[PromoCodeResponse])
+async def list_promo_codes(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    promos = (await db.execute(
+        select(PromoCode)
+        .options(selectinload(PromoCode.allowed_users).selectinload(PromoCodeUser.user))
+        .order_by(PromoCode.created_at.desc())
+    )).scalars().all()
+    return [await _serialize_promo_code(db, p) for p in promos]
+
+
+@router.post("/promo-codes", response_model=PromoCodeResponse, status_code=status.HTTP_201_CREATED)
+async def create_promo_code(
+    body: PromoCodeCreateRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    code = normalize_code(body.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="Codul nu poate fi gol.")
+    _validate_promo_fields(body.discount_percent, body.max_uses, body.max_uses_per_user,
+                           body.valid_from, body.valid_until)
+    _validate_audience(body.audience, body.allowed_user_ids)
+
+    existing = (await db.execute(select(PromoCode).where(PromoCode.code == code))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Codul '{code}' există deja.")
+
+    promo = PromoCode(
+        code=code,
+        discount_percent=body.discount_percent,
+        audience=body.audience,
+        max_uses=body.max_uses,
+        max_uses_per_user=body.max_uses_per_user,
+        valid_from=body.valid_from,
+        valid_until=body.valid_until,
+        plan_key=body.plan_key or None,
+        plan_type=body.plan_type or None,
+    )
+    db.add(promo)
+    await db.flush()
+
+    await _set_allowlist(db, promo, body.allowed_user_ids)
+    return await _serialize_promo_code(db, await _load_promo(db, promo.id))
+
+
+async def _set_allowlist(db: AsyncSession, promo: PromoCode, user_ids: list[int]) -> None:
+    """Replace the code's allowlist. An empty list opens the code to everyone."""
+    unique_ids = list(dict.fromkeys(user_ids))
+    if unique_ids:
+        found = (await db.execute(select(User.id).where(User.id.in_(unique_ids)))).scalars().all()
+        missing = set(unique_ids) - set(found)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Utilizatori inexistenți: {sorted(missing)}")
+
+    await db.execute(sa_delete(PromoCodeUser).where(PromoCodeUser.promo_code_id == promo.id))
+    for user_id in unique_ids:
+        db.add(PromoCodeUser(promo_code_id=promo.id, user_id=user_id))
+    await db.flush()
+
+    # The bulk delete goes straight to the DB without touching the session, so
+    # promo.allowed_users is still holding the rows we just removed. Expire that
+    # one attribute — expiring the whole object would drop the loaded PK too and
+    # send the caller's reload into a sync lazy-load — or the caller serialises
+    # the old allowlist back out.
+    db.expire(promo, ["allowed_users"])
+
+
+@router.patch("/promo-codes/{promo_id}", response_model=PromoCodeResponse)
+async def update_promo_code(
+    promo_id: int,
+    body: PromoCodeUpdateRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    promo = await _load_promo(db, promo_id)
+    _validate_audience(
+        body.audience if body.audience is not None else promo.audience,
+        body.allowed_user_ids if body.allowed_user_ids is not None
+        else [entry.user_id for entry in promo.allowed_users],
+    )
+    _validate_promo_fields(
+        body.discount_percent,
+        body.max_uses,
+        body.max_uses_per_user,
+        body.valid_from if body.valid_from is not None else promo.valid_from,
+        body.valid_until if body.valid_until is not None else promo.valid_until,
+    )
+
+    # Editing a live code never rewrites history — past redemptions carry their
+    # own snapshot of the percent and amounts they were granted at.
+    #
+    # Keyed off model_fields_set rather than a None check, so that explicitly
+    # sending null clears a limit (max_uses -> unlimited, valid_until -> never
+    # expires, plan_key -> every plan) while an omitted field stays untouched.
+    provided = body.model_fields_set
+    clearable = {"max_uses", "valid_from", "valid_until", "plan_key", "plan_type"}
+    for field in ("discount_percent", "audience", "max_uses", "max_uses_per_user",
+                  "valid_from", "valid_until", "plan_key", "plan_type", "is_active"):
+        if field not in provided:
+            continue
+        value = getattr(body, field)
+        if value is None and field not in clearable:
+            continue
+        setattr(promo, field, value or None if field in {"plan_key", "plan_type"} else value)
+
+    if body.allowed_user_ids is not None:
+        await _set_allowlist(db, promo, body.allowed_user_ids)
+
+    await db.flush()
+    return await _serialize_promo_code(db, await _load_promo(db, promo_id))
+
+
+@router.delete("/promo-codes/{promo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_promo_code(
+    promo_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    promo = await _load_promo(db, promo_id)
+    confirmed = (await db.execute(
+        select(func.count()).select_from(PromoRedemption).where(
+            PromoRedemption.promo_code_id == promo.id,
+            PromoRedemption.status == "confirmed",
+        )
+    )).scalar_one()
+    # Deleting would cascade the redemptions away with it, losing the record of
+    # discounts already granted. Deactivate instead once a code has been used.
+    if confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Codul a fost deja folosit și nu poate fi șters. Dezactivează-l în schimb.",
+        )
+    await db.delete(promo)
+
+
+class PromoRedemptionResponse(BaseModel):
+    id: int
+    order_id: str
+    code: str
+    user_id: int
+    member_name: str
+    discount_percent: int
+    original_amount: int
+    discount_amount: int
+    final_amount: int
+    status: str
+    created_at: datetime
+    confirmed_at: Optional[datetime]
+
+
+@router.get("/promo-redemptions", response_model=list[PromoRedemptionResponse])
+async def list_promo_redemptions(
+    response: Response,
+    promo_id: Optional[int] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    filters = [PromoRedemption.status == "confirmed"]
+    if promo_id is not None:
+        filters.append(PromoRedemption.promo_code_id == promo_id)
+
+    total = (await db.execute(
+        select(func.count()).select_from(PromoRedemption).where(*filters)
+    )).scalar_one()
+
+    rows = (await db.execute(
+        select(PromoRedemption, PromoCode.code, User.first_name, User.last_name)
+        .join(PromoCode, PromoCode.id == PromoRedemption.promo_code_id)
+        .join(User, User.id == PromoRedemption.user_id)
+        .where(*filters)
+        .order_by(PromoRedemption.confirmed_at.desc(), PromoRedemption.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )).all()
+
+    response.headers["X-Total-Count"] = str(total)
+    return [
+        PromoRedemptionResponse(
+            id=r.id,
+            order_id=r.order_id,
+            code=code,
+            user_id=r.user_id,
+            member_name=f"{first_name} {last_name}",
+            discount_percent=r.discount_percent,
+            original_amount=r.original_amount,
+            discount_amount=r.discount_amount,
+            final_amount=r.final_amount,
+            status=r.status,
+            created_at=r.created_at,
+            confirmed_at=r.confirmed_at,
+        )
+        for r, code, first_name, last_name in rows
+    ]

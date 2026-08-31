@@ -4,6 +4,7 @@ import uuid
 import hashlib
 import base64
 from datetime import date, datetime, timedelta
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
@@ -13,9 +14,11 @@ from sqlalchemy.orm import contains_eager
 
 from app.core.database import get_db
 from app.core.membership import compute_end_date, snapshot_freeze_allowance
+from app.core.promo import quote_promo_code, release_own_pending_holds
 from app.core.dependencies import require_user
 from app.models.membership import Membership
 from app.models.membership_plan import MembershipPlan
+from app.models.promo_code import PromoRedemption
 from app.models.qr_card import QRCard
 from app.models.user import User
 
@@ -35,6 +38,7 @@ class CheckoutRequest(BaseModel):
     plan: str
     plan_type: str = "full_time"
     start_date: date = None
+    promo_code: Optional[str] = None
 
     @field_validator("start_date", mode="before")
     @classmethod
@@ -115,8 +119,34 @@ async def create_checkout_session(
     first_name = current_user.first_name
     last_name = current_user.last_name
 
+    # Apply the discount code, if any. Re-validated here under a row lock rather
+    # than trusting anything the client sends, so the price is always derived
+    # server-side from the code itself.
+    #
+    # The redemption row is the only place the discount is recorded. Keyed by
+    # order_id, it lets the IPN handler recover the discount without the orderID
+    # format having to carry it — that string is parsed positionally from both
+    # ends, so adding a field to it would misparse orders already in flight.
+    charge_amount = plan.amount
+    if body.promo_code:
+        # Replace any hold left by an attempt this member abandoned, so retries
+        # reserve one slot rather than stacking up.
+        await release_own_pending_holds(db, body.promo_code, current_user.id)
+        quote = await quote_promo_code(db, body.promo_code, current_user, plan, lock=True)
+        charge_amount = quote.final_amount
+        db.add(PromoRedemption(
+            order_id=order_id,
+            promo_code_id=quote.promo_code.id,
+            user_id=current_user.id,
+            discount_percent=quote.discount_percent,
+            original_amount=quote.original_amount,
+            discount_amount=quote.discount_amount,
+            final_amount=quote.final_amount,
+            status="pending",
+        ))
+
     # Netopia expects amounts in RON (not bani)
-    amount_ron = plan.amount / 100
+    amount_ron = charge_amount / 100
 
     billing = BillingData(
         email=current_user.email,
@@ -323,6 +353,17 @@ async def netopia_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     )
     db.add(membership)
     await db.flush()  # populate membership.id
+
+    # Burn the discount code, if this order used one. Only at payment success —
+    # an abandoned checkout leaves its row pending, and pending rows age out of
+    # the usage count so the code becomes available again.
+    redemption = (await db.execute(
+        select(PromoRedemption).where(PromoRedemption.order_id == order_id)
+    )).scalar_one_or_none()
+    if redemption and redemption.status != "confirmed":
+        redemption.status = "confirmed"
+        redemption.confirmed_at = datetime.utcnow()
+        print(f"✅ Promo code redeemed — order: {order_id}, -{redemption.discount_percent}%")
 
     existing_qr_result = await db.execute(
         select(QRCard)
