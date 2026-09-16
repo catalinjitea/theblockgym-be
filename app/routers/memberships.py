@@ -4,9 +4,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.dependencies import require_user
@@ -77,18 +76,29 @@ async def get_my_qr(
     current_user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Look the card up across all of the user's memberships, not just the newest:
+    # an advance-purchased membership has no card until the verify endpoint
+    # repoints it there, so the card still hangs off the current membership.
     result = await db.execute(
-        select(Membership)
-        .where(Membership.user_id == current_user.id, Membership.status == "activ")
-        .options(selectinload(Membership.qr_card))
-        .order_by(Membership.created_at.desc())
+        select(QRCard)
+        .join(Membership, QRCard.membership_id == Membership.id)
+        .where(
+            Membership.user_id == current_user.id,
+            Membership.status == "activ",
+            QRCard.is_active.is_(True),
+        )
+        .order_by(
+            case((QRCard.type == "digital", 0), else_=1),
+            QRCard.created_at.desc(),
+        )
+        .limit(1)
     )
-    membership = result.scalars().first()
+    card = result.scalar_one_or_none()
 
-    if not membership or not membership.qr_card:
+    if not card:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No QR code found for your membership.")
 
-    code = membership.qr_card.code
+    code = card.code
     if code.startswith("QR"):
         code = code[2:]
     png_bytes = generate_qr_image(code)
