@@ -26,6 +26,7 @@ class SessionResponse(BaseModel):
     max_capacity: int
     booked_count: int
     is_booked: bool = False
+    booking_cutoff_hours: int
 
     model_config = {"from_attributes": True}
 

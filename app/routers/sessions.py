@@ -19,8 +19,22 @@ from app.schemas.sessions import BookedUserResponse, BookingResponse, MySessionR
 router = APIRouter()
 
 # Bookings close this long before a class starts, so trainers know their
-# numbers the evening before and late no-shows can't hold a spot.
-BOOKING_CUTOFF = timedelta(hours=12)
+# numbers in time and late no-shows can't hold a spot. Morning classes close
+# the evening before; evening classes stay open until shortly before.
+# start_datetime is naive Romanian local time, so .hour is the local hour.
+MORNING_CLASS_BEFORE_HOUR = 12
+MORNING_BOOKING_CUTOFF = timedelta(hours=10)
+EVENING_BOOKING_CUTOFF = timedelta(hours=1)
+
+
+def booking_cutoff(session: Session) -> timedelta:
+    if session.start_datetime.hour < MORNING_CLASS_BEFORE_HOUR:
+        return MORNING_BOOKING_CUTOFF
+    return EVENING_BOOKING_CUTOFF
+
+
+def _cutoff_hours(session: Session) -> int:
+    return int(booking_cutoff(session).total_seconds() // 3600)
 
 
 async def _booking_access_error(user: User, session: Session, db: AsyncSession) -> dict | None:
@@ -104,6 +118,7 @@ async def list_sessions(
             max_capacity=session.max_capacity,
             booked_count=counts.get(session.id, 0),
             is_booked=session.id in booked_ids,
+            booking_cutoff_hours=_cutoff_hours(session),
         )
         for session in sessions
     ]
@@ -194,13 +209,14 @@ async def book_session(
     if not session or session.start_datetime <= ro_now():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sesiunea nu există sau a început deja.")
 
-    if session.start_datetime - ro_now() < BOOKING_CUTOFF:
-        hours = int(BOOKING_CUTOFF.total_seconds() // 3600)
+    if session.start_datetime - ro_now() < booking_cutoff(session):
+        hours = _cutoff_hours(session)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "booking_closed",
-                "message": f"Rezervările se închid cu {hours} ore înainte de începerea clasei.",
+                "message": f"Rezervările se închid cu {'o oră' if hours == 1 else f'{hours} ore'} înainte de începerea clasei.",
+                "hours": hours,
             },
         )
 
