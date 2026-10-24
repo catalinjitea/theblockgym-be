@@ -38,7 +38,11 @@ There is no test suite in this project.
 
 **DB session pattern:** `get_db()` in [app/core/database.py](app/core/database.py) is a FastAPI dependency that yields an `AsyncSession`, auto-commits on success and rolls back on exception. Always use `await db.flush()` to get generated IDs mid-transaction before the commit that `get_db` handles.
 
-**Auth:** JWT stored in an httponly cookie named `access_token`. `get_current_user` reads and validates it. `require_user` and `require_admin` are composed on top. Admin tokens have a longer expiry (24h default vs 60min for users).
+**Auth:** two paths into the same `get_current_user`. The website: JWT in an httponly cookie named `access_token` (from `POST /auth/login`). The mobile app: `Authorization: Bearer` header with a 15-minute JWT carrying `typ="access"`, from `POST /v1/auth/token` in [app/routers/mobile_auth.py](app/routers/mobile_auth.py). A Bearer header, when present, wins and never falls back to the cookie, and `decode_bearer_token` rejects any JWT without `typ="access"` and `exp` (so unsubscribe tokens can't be used as Bearer tokens; the cookie path doesn't check this yet, see the app repo's `docs/second-iteration.md`). `require_user` and `require_admin` are composed on top. Admin cookie tokens have a longer expiry (24h default vs 60min for users).
+
+Mobile refresh tokens are opaque, stored as SHA-256 in `refresh_tokens`, and rotate on every `POST /v1/auth/refresh`; rows from one login share a `family_id`. A refresh token presented after it was used revokes the whole family. Because `get_db` rolls back on exceptions, revocations done just before raising an `HTTPException` must `await db.commit()` first.
+
+**Versioning:** the mobile app uses only `/v1/*` routes — the member-facing routers mounted a second time in [app/main.py](app/main.py), plus `mobile_auth`. Never make a breaking change under `/v1`. After changing any route or schema the app uses, run `python scripts/export_openapi.py` and commit `docs/openapi.json` (the app generates its TypeScript types from it).
 
 **Router registration:** All routers are registered in [app/main.py](app/main.py). The `qr_cards` router is mounted at `/admin/qrcards` (not `/qrcards`).
 

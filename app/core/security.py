@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -9,6 +11,10 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", str(24 * 60)))
+# Mobile app: short-lived Bearer access token plus a rotating refresh token
+MOBILE_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("MOBILE_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "60"))
+ACCESS_TOKEN_TYPE = "access"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -30,6 +36,30 @@ def decode_access_token(token: str) -> Optional[str]:
         return payload.get("sub")
     except JWTError:
         return None
+
+# ── Mobile Bearer tokens ──────────────────────────────────────────────────────
+# Unlike the cookie token, these carry typ="access" and the Bearer path accepts
+# nothing else, so other JWTs signed with the same key (unsubscribe links)
+# can never be presented as a Bearer token.
+def create_mobile_access_token(user_id: int) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=MOBILE_ACCESS_TOKEN_EXPIRE_MINUTES)
+    return jwt.encode({"sub": str(user_id), "exp": expire, "typ": ACCESS_TOKEN_TYPE}, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_bearer_token(token: str) -> Optional[str]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"require_exp": True})
+    except JWTError:
+        return None
+    if payload.get("typ") != ACCESS_TOKEN_TYPE:
+        return None
+    return payload.get("sub")
+
+# Refresh tokens are opaque random strings; only their SHA-256 is stored
+def new_refresh_token() -> str:
+    return secrets.token_urlsafe(48)
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 def create_unsubscribe_token(user_id: int) -> str:
     return jwt.encode({"sub": str(user_id), "purpose": "unsubscribe"}, SECRET_KEY, algorithm=ALGORITHM)

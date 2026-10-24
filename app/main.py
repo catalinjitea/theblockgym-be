@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-from app.models import membership_plan, promo_code, scan_entry, session, booking  # noqa: F401 – registers models with Base
-from app.routers import admin, auth, memberships, payments, plans, promo, qr_cards, sessions
+from app.models import membership_plan, promo_code, scan_entry, session, booking, refresh_token  # noqa: F401 – registers models with Base
+from app.routers import admin, auth, memberships, mobile_auth, payments, plans, promo, qr_cards, sessions
 
 app = FastAPI(title="The Block Gym API")
 
@@ -42,6 +42,15 @@ app.include_router(plans.router,       prefix="/plans",        tags=["Plans"])
 app.include_router(promo.router,       prefix="/promo",        tags=["Promo"])
 app.include_router(qr_cards.router,    prefix="/admin/qrcards", tags=["QR Cards"])
 app.include_router(sessions.router,    prefix="/sessions",      tags=["Sessions"])
+
+# ── v1: the mobile app's API ──────────────────────────────────────────────────
+# The same member-facing handlers, mounted again under /v1 so the app depends
+# on a versioned contract. The unversioned routes above stay as they are for
+# the website. No breaking changes under /v1 once the app ships.
+app.include_router(mobile_auth.router, prefix="/v1/auth",        tags=["v1 Auth"])
+app.include_router(memberships.router, prefix="/v1/memberships", tags=["v1 Memberships"])
+app.include_router(plans.router,       prefix="/v1/plans",       tags=["v1 Plans"])
+app.include_router(sessions.router,    prefix="/v1/sessions",    tags=["v1 Sessions"])
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
