@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -19,4 +19,7 @@ class UserPreferences(Base):
     user_id:    Mapped[int]      = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
     # "ro" or "en": the app's UI language, and the language of its push notifications
     language:   Mapped[str]      = mapped_column(String(5), nullable=False, default="ro")
+    # Push notifications; both on unless the member turns them off
+    class_reminders: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    expiry_alerts:   Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import os
 from dotenv import load_dotenv
 
@@ -6,8 +8,9 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core import notification_jobs
 from app.core.database import Base, engine
-from app.models import membership_plan, promo_code, scan_entry, session, booking, refresh_token, user_preferences  # noqa: F401 – registers models with Base
+from app.models import membership_plan, promo_code, scan_entry, session, booking, refresh_token, user_preferences, push_device, notification_log  # noqa: F401 – registers models with Base
 from app.routers import admin, auth, me, memberships, mobile_auth, payments, plans, promo, qr_cards, sessions
 
 app = FastAPI(title="The Block Gym API")
@@ -32,6 +35,17 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    if notification_jobs.JOBS_ENABLED:
+        app.state.notification_task = asyncio.create_task(notification_jobs.notification_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    task = getattr(app.state, "notification_task", None)
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router,        prefix="/auth",        tags=["Auth"])
