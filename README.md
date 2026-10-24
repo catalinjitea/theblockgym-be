@@ -141,6 +141,7 @@ The mobile app (`theblockgym-app`) uses only routes under `/v1`, a versioned cop
 | `POST /v1/auth/refresh` | `{refresh_token}` → a new pair. The old refresh token stops working; presenting it again logs out that whole login. |
 | `POST /v1/auth/logout` | `{refresh_token}` → 204, revokes that login |
 | `GET /v1/auth/me` | Current user |
+| `GET/PATCH /v1/me/preferences` | `{language: "ro" \| "en" \| null}`; `null` until the member saves one. Stored in `user_preferences`. |
 | `/v1/memberships/*`, `/v1/plans`, `/v1/sessions/*` | Same handlers as the unversioned routes |
 
 Authenticated requests send `Authorization: Bearer <access_token>`. Every route that accepts the website's cookie also accepts a Bearer token; when both are present the header wins.

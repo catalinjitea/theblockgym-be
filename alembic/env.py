@@ -30,6 +30,7 @@ import app.models.scan_entry       # noqa: E402, F401
 import app.models.session          # noqa: E402, F401
 import app.models.booking          # noqa: E402, F401
 import app.models.refresh_token    # noqa: E402, F401
+import app.models.user_preferences # noqa: E402, F401
 
 target_metadata = Base.metadata
 
