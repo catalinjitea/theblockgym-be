@@ -70,12 +70,12 @@ async def get_my_membership(
     return response
 
 
-# ── GET /memberships/me/qr ────────────────────────────────────────────────────
-@router.get("/me/qr")
-async def get_my_qr(
-    current_user: User = Depends(require_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def _my_card_code(db: AsyncSession, user: User) -> str:
+    """The text encoded in the member's QR code, as the door scanner reads it.
+
+    Shared by the PNG endpoint (website) and the text endpoint (mobile app) so
+    both always show the same code.
+    """
     # Look the card up across all of the user's memberships, not just the newest:
     # an advance-purchased membership has no card until the verify endpoint
     # repoints it there, so the card still hangs off the current membership.
@@ -83,7 +83,7 @@ async def get_my_qr(
         select(QRCard)
         .join(Membership, QRCard.membership_id == Membership.id)
         .where(
-            Membership.user_id == current_user.id,
+            Membership.user_id == user.id,
             Membership.status == "activ",
             QRCard.is_active.is_(True),
         )
@@ -101,8 +101,31 @@ async def get_my_qr(
     code = card.code
     if code.startswith("QR"):
         code = code[2:]
-    png_bytes = generate_qr_image(code)
+    return code
+
+
+# ── GET /memberships/me/qr ────────────────────────────────────────────────────
+@router.get("/me/qr")
+async def get_my_qr(
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    png_bytes = generate_qr_image(await _my_card_code(db, current_user))
     return StreamingResponse(io.BytesIO(png_bytes), media_type="image/png")
+
+
+# ── GET /memberships/me/qr-code ───────────────────────────────────────────────
+class QRCodeResponse(BaseModel):
+    # Encode this exact string; it is what /me/qr renders as a PNG
+    code: str
+
+@router.get("/me/qr-code", response_model=QRCodeResponse)
+async def get_my_qr_code(
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # The mobile app draws the code itself so it can keep it for offline use
+    return QRCodeResponse(code=await _my_card_code(db, current_user))
 
 
 # ── GET /memberships/me/history ───────────────────────────────────────────────
