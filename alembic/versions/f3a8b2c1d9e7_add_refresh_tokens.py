@@ -24,6 +24,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # app.main runs Base.metadata.create_all on startup, so if the new code
+    # started before this migration ran, the table (and its indexes, same
+    # names) already exists. Only the created_at server default is missing then.
+    if sa.inspect(op.get_bind()).has_table('refresh_tokens'):
+        op.alter_column('refresh_tokens', 'created_at', server_default=sa.func.now())
+        return
+
     op.create_table(
         'refresh_tokens',
         sa.Column('id', sa.Integer(), nullable=False),
