@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -16,6 +16,7 @@ from app.core.security import (
     new_refresh_token,
     verify_password,
 )
+from app.models.push_device import PushDevice
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.routers.auth import me
@@ -33,6 +34,12 @@ class TokenRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+    # The phone's push token, so notifications stop with the session
+    expo_push_token: Optional[str] = None
 
 
 class TokenPairResponse(BaseModel):
@@ -123,7 +130,7 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
 
 # ── POST /v1/auth/logout ──────────────────────────────────────────────────────
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def logout(body: LogoutRequest, db: AsyncSession = Depends(get_db)):
     # Holding the refresh token is the proof; an unknown token is not an error
     # so a logout retried after a lost response still succeeds
     row = await db.scalar(
@@ -131,6 +138,13 @@ async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     )
     if row:
         await _revoke_family(db, row.family_id)
+        if body.expo_push_token:
+            await db.execute(
+                delete(PushDevice).where(
+                    PushDevice.expo_push_token == body.expo_push_token,
+                    PushDevice.user_id == row.user_id,
+                )
+            )
 
 
 # ── GET /v1/auth/me ───────────────────────────────────────────────────────────

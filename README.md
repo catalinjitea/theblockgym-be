@@ -67,6 +67,9 @@ API docs available at: http://localhost:8000/docs
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Website login lifetime, default `60` |
 | `MOBILE_ACCESS_TOKEN_EXPIRE_MINUTES` | Mobile app access token lifetime, default `15` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Mobile app refresh token lifetime, default `60` (renewed on every refresh) |
+| `NOTIFICATION_JOBS_ENABLED` | `false` stops the push notification jobs in this process (default `true`). Keep them on in exactly one process. |
+| `NOTIFICATION_JOBS_INTERVAL_SECONDS` | How often the jobs run, default `300` |
+| `EXPO_ACCESS_TOKEN` | Only if "Enhanced push security" is enabled for the Expo project |
 
 ---
 
@@ -139,9 +142,11 @@ The mobile app (`theblockgym-app`) uses only routes under `/v1`, a versioned cop
 |---|---|
 | `POST /v1/auth/token` | `{email, password}` → `{access_token, refresh_token, token_type, expires_in}` |
 | `POST /v1/auth/refresh` | `{refresh_token}` → a new pair. The old refresh token stops working; presenting it again logs out that whole login. |
-| `POST /v1/auth/logout` | `{refresh_token}` → 204, revokes that login |
+| `POST /v1/auth/logout` | `{refresh_token, expo_push_token?}` → 204, revokes that login and unregisters the phone from push |
 | `GET /v1/auth/me` | Current user |
-| `GET/PATCH /v1/me/preferences` | `{language: "ro" \| "en" \| null}`; `null` until the member saves one. Stored in `user_preferences`. |
+| `GET/PATCH /v1/me/preferences` | `{language: "ro" \| "en" \| null, class_reminders: bool, expiry_alerts: bool}`. Language is `null` until saved; both toggles default to on. Stored in `user_preferences`. |
+| `POST /v1/me/devices` | `{expo_push_token, platform: "ios" \| "android", locale?}` → 204. Idempotent; a token already linked to another member moves to this one. |
+| `DELETE /v1/me/devices/{token}` | 204; only the member's own device |
 | `/v1/memberships/*`, `/v1/plans`, `/v1/sessions/*` | Same handlers as the unversioned routes |
 
 Authenticated requests send `Authorization: Bearer <access_token>`. Every route that accepts the website's cookie also accepts a Bearer token; when both are present the header wins.
@@ -155,4 +160,13 @@ Refresh tokens are stored hashed in `refresh_tokens` (one row per issued token, 
 ```bash
 python scripts/export_openapi.py
 ```
+
+### Push notifications
+
+A background loop started with the app (`app/core/notification_jobs.py`) runs every 5 minutes and sends through Expo's push service:
+
+- **Class reminder** for every confirmed booking whose class starts within the next hour.
+- **Expiry alerts** 3 days before a membership's last day and on the last day, between 10:00 and 21:00 Romanian time, skipped when the member already has a later membership.
+
+Both respect the member's toggles and language (`user_preferences`). Every notification is recorded in `notification_log` before it is sent, so nothing is sent twice, even if two processes run the jobs. Tokens Expo reports as no longer registered are deleted.
 

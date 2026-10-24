@@ -3435,7 +3435,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
+                "$ref": "#/components/schemas/LogoutRequest"
               }
             }
           },
@@ -3614,6 +3614,119 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/devices": {
+      "post": {
+        "tags": [
+          "v1 Me"
+        ],
+        "summary": "Register Device",
+        "operationId": "register_device_v1_me_devices_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "access_token",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Access Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/devices/{expo_push_token}": {
+      "delete": {
+        "tags": [
+          "v1 Me"
+        ],
+        "summary": "Unregister Device",
+        "operationId": "unregister_device_v1_me_devices__expo_push_token__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "expo_push_token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Expo Push Token"
+            }
+          },
+          {
+            "name": "access_token",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Access Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -4572,6 +4685,42 @@
         ],
         "title": "CheckoutRequest"
       },
+      "DeviceRequest": {
+        "properties": {
+          "expo_push_token": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Expo Push Token"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "android"
+            ],
+            "title": "Platform"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expo_push_token",
+          "platform"
+        ],
+        "title": "DeviceRequest"
+      },
       "ForgotPasswordRequest": {
         "properties": {
           "email": {
@@ -4774,6 +4923,30 @@
           "password"
         ],
         "title": "LoginRequest"
+      },
+      "LogoutRequest": {
+        "properties": {
+          "refresh_token": {
+            "type": "string",
+            "title": "Refresh Token"
+          },
+          "expo_push_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expo Push Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "title": "LogoutRequest"
       },
       "MembershipPlanResponse": {
         "properties": {
@@ -5152,6 +5325,16 @@
               }
             ],
             "title": "Language"
+          },
+          "class_reminders": {
+            "type": "boolean",
+            "title": "Class Reminders",
+            "default": true
+          },
+          "expiry_alerts": {
+            "type": "boolean",
+            "title": "Expiry Alerts",
+            "default": true
           }
         },
         "type": "object",
@@ -5173,6 +5356,28 @@
               }
             ],
             "title": "Language"
+          },
+          "class_reminders": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Reminders"
+          },
+          "expiry_alerts": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry Alerts"
           }
         },
         "type": "object",

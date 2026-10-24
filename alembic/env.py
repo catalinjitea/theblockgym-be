@@ -31,6 +31,8 @@ import app.models.session          # noqa: E402, F401
 import app.models.booking          # noqa: E402, F401
 import app.models.refresh_token    # noqa: E402, F401
 import app.models.user_preferences # noqa: E402, F401
+import app.models.push_device      # noqa: E402, F401
+import app.models.notification_log # noqa: E402, F401
 
 target_metadata = Base.metadata
 

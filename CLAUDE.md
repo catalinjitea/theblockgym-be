@@ -81,3 +81,8 @@ Netopia integration in [app/routers/payments.py](app/routers/payments.py). The `
 ## Environment
 
 Copy `env.example` to `.env`. Key variables: `DATABASE_URL` (Railway may send `postgres://` — the DB module normalizes it to `postgresql+asyncpg://`), `JWT_SECRET_KEY`, `NETOPIA_*`, `FRONTEND_URL`, `BACKEND_URL`, `ENVIRONMENT` (set to `production` to enable secure/samesite-none cookies).
+
+## Domain: Push notifications (mobile app)
+
+Devices register with `POST /v1/me/devices` (Expo push tokens in `push_devices`); toggles and language live in `user_preferences` (defaults on/`ro` when no row). `notification_loop` in [app/core/notification_jobs.py](app/core/notification_jobs.py) is started from `startup` in `app/main.py` (disable with `NOTIFICATION_JOBS_ENABLED=false`) and sends class reminders (booking starting within the hour) and expiry alerts (3 days before and on the last day, daytime only, skipped if a later membership exists). A member's last day is `(end_date - 1s).date()`, because end dates are either `day 23:59:59` or, in older rows, `next day 00:00`. Each send is claimed first by an insert-if-absent into `notification_log` (unique `kind, ref_id`), which makes it at-most-once across processes. `app/core/push.py` talks to Expo and deletes tokens reported as `DeviceNotRegistered`.
+
