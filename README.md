@@ -63,7 +63,10 @@ API docs available at: http://localhost:8000/docs
 | `NETOPIA_PUBLIC_KEY` | RSA public key PEM string from Netopia |
 | `FRONTEND_URL` | Your frontend URL (used for redirect after payment) |
 | `BACKEND_URL` | Your backend URL (used to build the IPN callback URL) |
-| `SECRET_KEY` | JWT signing secret |
+| `JWT_SECRET_KEY` | JWT signing secret (website cookie and mobile tokens) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Website login lifetime, default `60` |
+| `MOBILE_ACCESS_TOKEN_EXPIRE_MINUTES` | Mobile app access token lifetime, default `15` |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Mobile app refresh token lifetime, default `60` (renewed on every refresh) |
 
 ---
 
@@ -125,3 +128,30 @@ python -m alembic downgrade <revision_id>
 ```
 
 > **Note:** Alembic reads `DATABASE_URL` from the environment (or `.env`). Make sure it is set before running any `alembic` command.
+
+---
+
+## 6. Mobile app API (`/v1`)
+
+The mobile app (`theblockgym-app`) uses only routes under `/v1`, a versioned copy of the member-facing routes. The unversioned routes stay as they are for the website. **No breaking changes under `/v1` once the app ships**: add fields and endpoints, don't rename or remove them.
+
+| Route | Purpose |
+|---|---|
+| `POST /v1/auth/token` | `{email, password}` → `{access_token, refresh_token, token_type, expires_in}` |
+| `POST /v1/auth/refresh` | `{refresh_token}` → a new pair. The old refresh token stops working; presenting it again logs out that whole login. |
+| `POST /v1/auth/logout` | `{refresh_token}` → 204, revokes that login |
+| `GET /v1/auth/me` | Current user |
+| `/v1/memberships/*`, `/v1/plans`, `/v1/sessions/*` | Same handlers as the unversioned routes |
+
+Authenticated requests send `Authorization: Bearer <access_token>`. Every route that accepts the website's cookie also accepts a Bearer token; when both are present the header wins.
+
+Refresh tokens are stored hashed in `refresh_tokens` (one row per issued token, grouped by `family_id` per login).
+
+### OpenAPI spec
+
+`docs/openapi.json` is the contract the app generates its types from. After changing any route or schema, regenerate and commit it:
+
+```bash
+python scripts/export_openapi.py
+```
+
